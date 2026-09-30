@@ -1,0 +1,14 @@
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Dependencies & build output (none today, but keeps future tooling out)
+node_modules/
+dist/
+build/
+
+# Catalogue exports produced by the admin panel
+cbk-catalogue-*.json

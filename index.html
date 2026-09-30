@@ -3,7 +3,22 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>La Sélection CBK — Faïence, Sanitaire & Robinetterie</title>
+<title>La Sélection CBK — Faïence, Grés, Sanitaire & Robinetterie | Ain Zaghouan</title>
+<meta name="description" content="La Sélection CBK à Ain Zaghouan : faïence, grés cérame, sanitaire, baignoires, robinetterie, meubles de salle de bain, ciment colle et étanchéité. Prix en TND, commande directe par WhatsApp.">
+<meta name="keywords" content="faience tunisie, gres cerame, sanitaire, robinetterie, baignoire, meuble salle de bain, ciment colle, Ain Zaghouan, carrelage Tunis">
+<meta name="author" content="La Sélection CBK">
+<meta name="theme-color" content="#0E2F42">
+<link rel="canonical" href="https://laselectioncbk.tn/">
+<!-- Open Graph / social sharing -->
+<meta property="og:type" content="website">
+<meta property="og:locale" content="fr_TN">
+<meta property="og:site_name" content="La Sélection CBK">
+<meta property="og:title" content="La Sélection CBK — Faïence, Sanitaire & Robinetterie">
+<meta property="og:description" content="Tout pour votre salle de bain et vos sols, sous un même toit. Commandez en un message sur WhatsApp.">
+<meta property="og:image" content="assets/products/tiles.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<!-- Inline SVG favicon: the CBK monogram, no extra request -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23C0392B'/%3E%3Cpath d='M0 0h64v64z' fill='%23D4AC0D' opacity='.45'/%3E%3Ctext x='32' y='42' font-family='Verdana,sans-serif' font-size='21' font-weight='bold' fill='%23fff' text-anchor='middle'%3ECBK%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
@@ -243,6 +258,20 @@
   .product-badge.new{background:var(--blue);}
   .product-badge.promo{background:var(--terracotta);}
   .product-badge.best{background:var(--gold);color:var(--ink);}
+  .product-badge.out{background:#6B7280;}
+
+  /* Stock availability line — live from the back-office inventory */
+  .stock-line{
+    display:flex;align-items:center;gap:7px;
+    font-size:12px;font-weight:600;letter-spacing:.1px;
+  }
+  .stock-line i{font-size:11px;}
+  .stock-line.ok{color:#117A65;}
+  .stock-line.low{color:#B9770E;}
+  .stock-line.out{color:#C0392B;}
+  .product-card.is-out .product-media img{filter:grayscale(.75);opacity:.62;}
+  .product-card.is-out .add-btn{background:#D8D2C9;color:#7a7168;cursor:not-allowed;box-shadow:none;}
+  .product-card.is-out .add-btn:hover{transform:none;background:#D8D2C9;}
   .product-body{padding:19px 19px 21px;display:flex;flex-direction:column;flex:1;gap:9px;}
   .product-body h4{font-size:15px;font-weight:700;color:var(--ink);line-height:1.35;min-height:40px;}
   .spec-line{font-size:12px;color:#8b7c6d;display:flex;align-items:center;gap:6px;margin-top:-4px;}
@@ -684,75 +713,37 @@
   <span id="toastMsg">Produit ajouté au panier</span>
 </div>
 
+<!-- Shared catalogue / cart / feedback layer, also used by admin.html -->
+<script src="assets/js/cbk-store.js"></script>
 <script>
 /* ============================================================
    CONFIG
    ============================================================ */
-const WHATSAPP_NUMBER = "216XXXXXXXX"; // placeholder — replace with real number, no + or spaces
-
-/* ============================================================
-   STABLE DIRECT UNSPLASH IMAGE URLS
-   ============================================================ */
-const imgTile1 = "assets/products/tiles.jpg";
-const imgTile2 = "assets/products/tiles.jpg";
-const imgMarble = "assets/products/tiles.jpg";
-const imgSink = "assets/products/sanitary.jpg";
-const imgToilet = "assets/products/sanitary.jpg";
-const imgBathtub = "assets/products/bathtub.jpg";
-const imgFaucet = "assets/products/faucet.jpg";
-const imgVanity = "assets/products/vanity.jpg";
-const imgTools = "assets/products/accessories.jpg";
+// Tunisian number in international format, digits only (no +, no spaces).
+const WHATSAPP_NUMBER = "216XXXXXXXX";        // TODO: remplacer par le vrai numéro
+const WHATSAPP_READY  = /^\d{8,15}$/.test(WHATSAPP_NUMBER);
 
 /* ============================================================
    PRODUCT DATA
+   ------------------------------------------------------------
+   Served by CBK (assets/js/cbk-store.js) so that anything the
+   back office adds or edits shows up here automatically.
    ============================================================ */
-const products = [
-  // Faïence
-  { id:1,  name:"Carreau Faïence Méditerranée 30x30",  cat:"Faience",  price:12.50, spec:"30x30 cm · Brillant",       img:imgTile1,  rating:4.5, badge:"" },
-  { id:2,  name:"Faïence Zellige Artisanal 20x20",     cat:"Faience",  price:18.00, spec:"20x20 cm · Fait main",      img:imgTile2,  rating:5,   badge:"best" },
-  { id:3,  name:"Faïence Motif Andalou 25x40",         cat:"Faience",  price:15.50, spec:"25x40 cm · Mat",            img:imgTile2,  rating:4,   badge:"new" },
-  { id:4,  name:"Faïence Uni Blanc Nacré 20x50",       cat:"Faience",  price:10.90, spec:"20x50 cm · Satiné",         img:imgTile1,    rating:4.5, badge:"" },
-  { id:5,  name:"Faïence Hexagonale Terracotta 15x17", cat:"Faience",  price:16.80, spec:"Hexagonale · 15x17 cm",     img:imgTile2,     rating:4.5, badge:"new" },
-  // Grés
-  { id:6,  name:"Grés Cérame Marbre Gris 60x60",       cat:"Gres",     price:28.00, spec:"60x60 cm · Poli",           img:imgMarble,     rating:5,   badge:"best" },
-  { id:7,  name:"Parquet Grés Bois Naturel 15x90",     cat:"Gres",     price:35.00, spec:"15x90 cm · Effet bois",     img:imgMarble,     rating:4.5, badge:"" },
-  { id:8,  name:"Grés Extérieur Antidérapant 40x40",   cat:"Gres",     price:22.00, spec:"40x40 cm · R11",            img:imgMarble,     rating:4,   badge:"" },
-  { id:9,  name:"Grés Grand Format Béton 90x90",       cat:"Gres",     price:45.00, spec:"90x90 cm · Effet béton",    img:imgMarble,     rating:4.5, badge:"new" },
-  { id:10, name:"Grés Marbre Calacatta 60x120",        cat:"Gres",     price:62.00, oldPrice:78.00, spec:"60x120 cm · Brillant", img:imgMarble, rating:5, badge:"promo" },
-  // Sanitaire
-  { id:11, name:"Lavabo Suspendu Élégance Blanc",      cat:"Sanitaire",price:89.00, spec:"Céramique · 60 cm",         img:imgSink,   rating:4.5, badge:"" },
-  { id:12, name:"WC Suspendu Comfort Plus",            cat:"Sanitaire",price:145.00,spec:"Sans bride · Silencieux",   img:imgToilet,       rating:4.5, badge:"best" },
-  { id:13, name:"Colonne de Douche Chromée",           cat:"Sanitaire",price:210.00,spec:"Thermostatique · Chromé",   img:imgFaucet,   rating:4,   badge:"" },
-  { id:14, name:"Vasque à Poser Ronde Design",         cat:"Sanitaire",price:120.00,spec:"40 cm · Céramique",         img:imgSink,   rating:4.5, badge:"new" },
-  { id:15, name:"Pack WC + Lavabo Compact",            cat:"Sanitaire",price:280.00,oldPrice:330.00, spec:"Duo · Gain de place", img:imgToilet, rating:4, badge:"promo" },
-  // Baignoire
-  { id:16, name:"Baignoire Îlot Rectangulaire 170cm",  cat:"Baignoire",price:590.00,spec:"170x80 cm · Acrylique",     img:imgBathtub,rating:5,   badge:"" },
-  { id:17, name:"Baignoire d'Angle Hydromassante",     cat:"Baignoire",price:890.00,spec:"150x150 cm · 6 jets",      img:imgBathtub,rating:4.5, badge:"new" },
-  { id:18, name:"Baignoire Balnéo Rectangulaire",      cat:"Baignoire",price:750.00,spec:"180x90 cm · Chromothérapie",img:imgBathtub,rating:4.5, badge:"" },
-  { id:19, name:"Receveur de Douche Extra-Plat",       cat:"Baignoire",price:165.00,oldPrice:195.00, spec:"90x90 cm · Antidérapant", img:imgBathtub, rating:4, badge:"promo" },
-  // Robinetterie
-  { id:20, name:"Robinet Thermostatique Noir Mat",     cat:"Robinetterie",price:175.00,spec:"Noir mat · Anticalcaire", img:imgFaucet,  rating:4.5, badge:"best" },
-  { id:21, name:"Mitigeur Évier Professionnel",        cat:"Robinetterie",price:95.00, spec:"Bec orientable · Inox",  img:imgFaucet, rating:4,   badge:"" },
-  { id:22, name:"Mitigeur Douche Encastré",            cat:"Robinetterie",price:220.00,spec:"Encastré · Chromé",      img:imgFaucet, rating:4.5, badge:"new" },
-  { id:23, name:"Robinet Cuisine Col de Cygne",        cat:"Robinetterie",price:130.00,spec:"Doré · Col de cygne",    img:imgFaucet,  rating:4.5, badge:"" },
-  { id:24, name:"Colonne de Douche Effet Pluie",       cat:"Robinetterie",price:260.00,oldPrice:310.00, spec:"Effet pluie · 25 cm", img:imgFaucet, rating:5, badge:"promo" },
-  // Meubles
-  { id:25, name:"Meuble Vasque 2 Tiroirs Chêne",       cat:"Meubles",  price:325.00,spec:"80 cm · Chêne clair",       img:imgVanity,   rating:4.5, badge:"" },
-  { id:26, name:"Colonne Salle de Bain 3 Portes",      cat:"Meubles",  price:280.00,spec:"3 portes · Blanc laqué",    img:imgVanity,   rating:4,   badge:"" },
-  { id:27, name:"Meuble Suspendu Noir Mat",            cat:"Meubles",  price:360.00,spec:"100 cm · Suspendu",         img:imgVanity,   rating:4.5, badge:"new" },
-  { id:28, name:"Miroir LED Salle de Bain",            cat:"Meubles",  price:150.00,spec:"80 cm · Anti-buée",        img:imgVanity,   rating:4.5, badge:"" },
-  // Accessoires
-  { id:29, name:"Sac Ciment Colle 25kg",               cat:"Accessoires",price:8.50, spec:"25 kg · Int./Ext.",        img:imgTools,   rating:4.5, badge:"" },
-  { id:30, name:"Caro-Joint Hydrofuge 5kg",            cat:"Accessoires",price:12.00,spec:"5 kg · Hydrofuge",         img:imgTools,    rating:4.5, badge:"" },
-  { id:31, name:"Kit Étanchéité Douche",               cat:"Accessoires",price:22.00,spec:"Kit complet · Douche",     img:imgTools,  rating:4,   badge:"" },
-  { id:32, name:"Profilé Aluminium Finition",          cat:"Accessoires",price:6.50, spec:"2.5 m · Aluminium",        img:imgTools,  rating:4,   badge:"new" },
-  { id:33, name:"Silicone Sanitaire Anti-moisissure",  cat:"Accessoires",price:9.00, spec:"310 ml · Anti-moisissure", img:imgTools, rating:4.5, badge:"" },
-];
+let products = CBK.products();
+
+// Admin edits in another tab push straight through to this page.
+CBK.onChange(() => {
+  products = CBK.products();
+  pruneCart();
+  renderProducts();
+  updateCartUI();
+  showToast("Catalogue mis à jour");
+});
 
 /* ============================================================
    STATE
    ============================================================ */
-let cart = {};          // { productId: quantity }
+let cart = CBK.cart.get();   // { productId: quantity } — restored from the last visit
 let activeCategory = "all";
 let searchTerm = "";
 let sortMode = "default";
@@ -760,7 +751,20 @@ let sortMode = "default";
 /* ============================================================
    HELPERS
    ============================================================ */
-function fmt(n){ return n.toFixed(2) + " TND"; }
+const fmt = CBK.fmt;         // 12.5 -> "12.50 TND"
+const esc = CBK.esc;         // escapes anything interpolated into innerHTML
+
+function findProduct(id){ return products.find(p => p.id === Number(id)) || null; }
+
+/** Drop cart lines whose product was deleted, and clamp to available stock. */
+function pruneCart(){
+  Object.keys(cart).forEach(id => {
+    const p = findProduct(id);
+    if(!p || p.stock <= 0) delete cart[id];
+    else if(cart[id] > p.stock) cart[id] = p.stock;
+  });
+  CBK.cart.set(cart);
+}
 
 function starsHtml(rating){
   let full = Math.floor(rating);
@@ -818,30 +822,39 @@ function renderProducts(){
     return;
   }
 
-  grid.innerHTML = list.map(p => `
-    <div class="product-card">
+  grid.innerHTML = list.map(p => {
+    const out = p.stock <= 0;
+    const low = !out && p.stock <= 5;
+    return `
+    <div class="product-card${out ? ' is-out' : ''}">
       <div class="product-media">
-        <span class="product-tag">${p.cat}</span>
-        ${badgeHtml(p.badge)}
-        <img src="${p.img}" alt="${p.name}" loading="lazy">
+        <span class="product-tag">${esc(CBK.categoryLabel(p.cat))}</span>
+        ${out ? '<span class="product-badge out">Rupture</span>' : badgeHtml(p.badge)}
+        <img src="${esc(p.img)}" alt="${esc(p.name)}" loading="lazy"
+             onerror="this.onerror=null;this.src='${CBK.IMG.tiles}';">
       </div>
       <div class="product-body">
-        <h4>${p.name}</h4>
-        <div class="spec-line"><i class="fa-solid fa-ruler-combined"></i> ${p.spec}</div>
+        <h4>${esc(p.name)}</h4>
+        <div class="spec-line"><i class="fa-solid fa-ruler-combined"></i> ${esc(p.spec)}</div>
         <div class="stars">${starsHtml(p.rating)} <span>(${p.rating})</span></div>
+        <div class="stock-line ${out ? 'out' : (low ? 'low' : 'ok')}">
+          <i class="fa-solid ${out ? 'fa-circle-xmark' : (low ? 'fa-triangle-exclamation' : 'fa-circle-check')}"></i>
+          ${out ? 'Rupture de stock' : (low ? `Plus que ${p.stock} en stock` : `En stock · ${p.stock} ${esc(p.unit)}${p.stock > 1 && p.unit !== 'm²' ? 's' : ''}`)}
+        </div>
         <div class="price-row">
           <div class="price-group">
             <span class="price ${p.oldPrice ? 'has-old' : ''}">${fmt(p.price)}</span>
             ${p.oldPrice ? `<span class="old-price">${fmt(p.oldPrice)}</span>` : ''}
           </div>
-          <small>/ unité</small>
+          <small>/ ${esc(p.unit)}</small>
         </div>
-        <button class="add-btn" data-id="${p.id}">
-          <i class="fa-solid fa-cart-plus"></i> <span>Ajouter au panier</span>
+        <button class="add-btn" data-id="${p.id}" ${out ? 'disabled' : ''}>
+          <i class="fa-solid ${out ? 'fa-ban' : 'fa-cart-plus'}"></i>
+          <span>${out ? 'Indisponible' : 'Ajouter au panier'}</span>
         </button>
       </div>
-    </div>
-  `).join("");
+    </div>`;
+  }).join("");
 
   grid.querySelectorAll(".add-btn").forEach(btn => {
     btn.addEventListener("click", () => addToCart(parseInt(btn.dataset.id), btn));
@@ -854,6 +867,14 @@ function renderProducts(){
    CART LOGIC
    ============================================================ */
 function addToCart(id, btnEl){
+  const p = findProduct(id);
+  if(!p) return;
+  if(p.stock <= 0){ showToast("Produit en rupture de stock"); return; }
+  if((cart[id] || 0) >= p.stock){
+    showToast(`Stock maximum atteint (${p.stock})`);
+    return;
+  }
+
   cart[id] = (cart[id] || 0) + 1;
   updateCartUI();
   showToast("Produit ajouté au panier");
@@ -871,8 +892,15 @@ function addToCart(id, btnEl){
 
 function changeQty(id, delta){
   if(!cart[id]) return;
-  cart[id] += delta;
-  if(cart[id] <= 0) delete cart[id];
+  const p = findProduct(id);
+  const next = cart[id] + delta;
+
+  if(p && next > p.stock){
+    showToast(`Stock maximum atteint (${p.stock})`);
+    return;
+  }
+  if(next <= 0) delete cart[id];
+  else cart[id] = next;
   updateCartUI();
 }
 
@@ -887,12 +915,13 @@ function cartCount(){
 
 function cartTotalValue(){
   return Object.entries(cart).reduce((sum,[id,qty]) => {
-    const p = products.find(x=>x.id===parseInt(id));
+    const p = findProduct(id);
     return sum + (p ? p.price*qty : 0);
   },0);
 }
 
 function updateCartUI(){
+  CBK.cart.set(cart);            // survive a reload
   const count = cartCount();
   document.getElementById("cartBadge").textContent = count;
   document.getElementById("floatingCount").textContent = count;
@@ -908,14 +937,14 @@ function updateCartUI(){
       </div>`;
   } else {
     container.innerHTML = entries.map(([id,qty]) => {
-      const p = products.find(x=>x.id===parseInt(id));
+      const p = findProduct(id);
       if(!p) return "";
       return `
         <div class="cart-item">
-          <img src="${p.img}" alt="${p.name}">
+          <img src="${esc(p.img)}" alt="${esc(p.name)}">
           <div class="cart-item-info">
-            <h5>${p.name}</h5>
-            <div class="unit-price">${fmt(p.price)} / unité</div>
+            <h5>${esc(p.name)}</h5>
+            <div class="unit-price">${fmt(p.price)} / ${esc(p.unit)}</div>
             <div class="qty-controls">
               <button data-action="dec" data-id="${p.id}">−</button>
               <span>${qty}</span>
@@ -950,15 +979,19 @@ function buildWhatsAppLink(){
   if(entries.length === 0) return null;
 
   let lines = entries.map(([id,qty]) => {
-    const p = products.find(x=>x.id===parseInt(id));
-    return `- ${p.name} x${qty} = ${fmt(p.price*qty)}`;
-  });
+    const p = findProduct(id);
+    if(!p) return "";
+    return `- ${p.name} (${p.spec}) x${qty} ${p.unit} = ${fmt(p.price*qty)}`;
+  }).filter(Boolean);
 
+  const ref = "CBK-" + Date.now().toString(36).toUpperCase().slice(-6);
   const message =
 `Bonjour La Sélection CBK, je souhaite commander :
+
 ${lines.join("\n")}
 
-Total : ${fmt(cartTotalValue())}`;
+Total : ${fmt(cartTotalValue())}
+Réf. panier : ${ref}`;
 
   return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
 }
@@ -969,7 +1002,14 @@ function sendWhatsAppOrder(){
     showToast("Votre panier est vide");
     return;
   }
-  window.open(link, "_blank");
+  if(!WHATSAPP_READY){
+    // Don't silently open a dead wa.me link — tell the shop owner what to fix.
+    showToast("Numéro WhatsApp non configuré (voir WHATSAPP_NUMBER)");
+    console.warn("[CBK] Renseignez WHATSAPP_NUMBER dans index.html. Message prêt :\n" +
+      decodeURIComponent(link.split("text=")[1]));
+    return;
+  }
+  window.open(link, "_blank", "noopener");
 }
 
 /* ============================================================
@@ -1082,13 +1122,28 @@ let selectedRating=0;
 const ratingButtons=document.querySelectorAll("#ratingStars button");
 function paintRating(r){ratingButtons.forEach(b=>b.innerHTML=`<i class="fa-${+b.dataset.rating<=r?'solid':'regular'} fa-star"></i>`)}
 ratingButtons.forEach(b=>b.addEventListener("click",()=>{selectedRating=+b.dataset.rating;paintRating(selectedRating)}));
-document.getElementById("feedbackForm").addEventListener("submit",e=>{e.preventDefault();const status=document.getElementById("feedbackStatus");if(!selectedRating){status.textContent="Veuillez sélectionner une note.";return;}const feedback={name:document.getElementById("feedbackName").value.trim(),email:document.getElementById("feedbackEmail").value.trim(),message:document.getElementById("feedbackMessage").value.trim(),rating:selectedRating,date:new Date().toISOString()};const entries=JSON.parse(localStorage.getItem("cbkFeedback")||"[]");entries.push(feedback);localStorage.setItem("cbkFeedback",JSON.stringify(entries));e.target.reset();selectedRating=0;paintRating(0);status.textContent="Merci ! Votre avis a bien été envoyé.";});
+document.getElementById("feedbackForm").addEventListener("submit",e=>{e.preventDefault();const status=document.getElementById("feedbackStatus");if(!selectedRating){status.textContent="Veuillez sélectionner une note.";return;}CBK.feedback.add({name:document.getElementById("feedbackName").value.trim(),email:document.getElementById("feedbackEmail").value.trim(),message:document.getElementById("feedbackMessage").value.trim(),rating:selectedRating});e.target.reset();selectedRating=0;paintRating(0);status.textContent="Merci ! Votre avis a bien été envoyé.";});
 
 /* ============================================================
    INIT
    ============================================================ */
+pruneCart();
 renderProducts();
 updateCartUI();
+
+// Reflect the real catalogue size in the hero + category cards instead of
+// the hard-coded "33+" that drifted out of date.
+(function syncCounts(){
+  const total = products.length;
+  const heroTag = document.querySelector(".hero-tags span:last-child");
+  if(heroTag) heroTag.innerHTML = `<i class="fa-solid fa-boxes-stacked"></i> ${total} références`;
+
+  document.querySelectorAll("#catCards .cat-card").forEach(card => {
+    const n = products.filter(p => p.cat === card.dataset.cat).length;
+    const small = card.querySelector("small");
+    if(small) small.textContent = `${n} référence${n !== 1 ? "s" : ""}`;
+  });
+})();
 </script>
 </body>
 </html>
