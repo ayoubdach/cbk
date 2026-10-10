@@ -1,0 +1,19 @@
+{
+  "name": "gym-owner-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A local-first gym membership and cash payment management dashboard.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "dev": "node --watch --disable-warning=ExperimentalWarning server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "nodemailer": "^10.1.0"
+  }
+}
