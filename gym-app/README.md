@@ -66,15 +66,28 @@ SMTP_USER=your-smtp-username
 SMTP_PASS=your-smtp-password-or-app-password
 SMTP_FROM="Your Gym <verified-sender@example.com>"
 APP_URL=http://localhost:3000
+
+# Optional AI assistant (OpenAI-compatible chat-completions API)
+AI_API_KEY=your-provider-api-key
+AI_MODEL=gpt-4o-mini
+AI_API_BASE_URL=https://api.openai.com/v1
 ```
 
 ### Promotional campaign safeguards
 
-- Campaign recipients are selected from member records with a separate **promotional email permission**. A reminder opt-in does not allow marketing, and the owner cannot add an arbitrary/non-consenting address to a send.
+- Campaign recipients are selected from saved member records with a separate **promotional email permission**. Current and former members remain eligible while their record, email address and consent remain; membership expiry alone does not remove them. A reminder opt-in does not allow marketing, and the owner cannot add an arbitrary/non-consenting address to a send.
 - Consent and the email address are checked again immediately before each queued send. If either changes, that recipient is skipped.
 - Campaign sender email must exactly match the address in `SMTP_FROM`; that address should be verified by your SMTP provider. Test campaigns go only to the owner account.
 - HTML is sanitized before delivery. Campaigns are queued and sent in small batches; transient SMTP failures are retried up to three attempts. Add a visible opt-out link/instructions appropriate to your local rules if your provider or jurisdiction requires one; members can also reply to the sender and the owner should remove promotional permission in the member profile.
 - SMTP credentials stay server-side. Do not commit `.env` or share it in chat. Check your email provider's free-tier limits and sender-verification requirements before using real member addresses.
+
+## Floating AI assistant (optional)
+
+Gymflow includes a closable messenger-style assistant for platform help, general questions and gym-specific membership/analytics questions. To turn it on, add `AI_API_KEY` to the server's `.env`, optionally set `AI_MODEL` and `AI_API_BASE_URL`, then restart the app. The default model is `gpt-4o-mini` and the default base URL is `https://api.openai.com/v1`. The endpoint must support the OpenAI-compatible `POST /chat/completions` API. Docker Compose also passes these three variables through to the container.
+
+The key remains server-side; it is never returned by `/api/config` or sent from browser code. Chat history is kept in the current browser session only and is not written to the Gymflow database. For gym-specific answers, the provider receives a limited snapshot of dashboard totals, plan information, recent cash payments and up to 250 matching member records. Member names, membership dates/status and payment/balance values may be included when relevant; member email addresses, phone numbers and private notes are excluded. Use an AI provider whose data-handling terms are appropriate for your gym, and verify important answers in the dashboard.
+
+Without AI configuration, the floating widget explains that setup is needed and the rest of Gymflow continues to work normally.
 
 ## Data, backups and exports
 
@@ -89,6 +102,6 @@ For an always-on VPS later, deploy behind HTTPS with a firewall and regular off-
 
 ## Current first-release scope
 
-Included: owner-only login and password changes, members with required name/phone/email, configurable plans and durations, membership history and expiry countdowns, separate reminder and marketing consent, manual cash-payment confirmation (including partial payments), cash collection summaries, reminder and promotional email queues, HTML campaign preview/test sending with SMTP safeguards, insights, CSV exports, SQLite backups, and fictional sample data.
+Included: owner-only login and password changes, members with required name/phone/email, configurable plans and durations, membership history and expiry countdowns, separate reminder and marketing consent, manual cash-payment confirmation (including partial payments), cash collection summaries, reminder and promotional email queues, HTML campaign preview/test sending with SMTP safeguards, a floating AI assistant (optional separately configured model/API), insights, CSV exports, SQLite backups, and fictional sample data.
 
-Not included yet: WhatsApp, staff accounts, attendance/check-in, expenses and profit calculations, natural-language AI assistance (requires a separately configured model/API), online payments, and member self-service.
+Not included yet: WhatsApp, staff accounts, attendance/check-in, expenses and profit calculations, online payments, and member self-service.

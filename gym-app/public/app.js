@@ -15,7 +15,8 @@ const iconPaths = {
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
   logout: '<path d="M10 17l5-5-5-5M15 12H3"/><path d="M12 3h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-7"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/>',
-  send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+  chat: '<path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"/>',
+  send:  '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
   close: '<path d="m18 6-12 12M6 6l12 12"/>',
@@ -47,6 +48,11 @@ const state = {
   campaigns: [],
   campaignRecipients: [],
   campaignRecipientText: null,
+  assistantOpen: false,
+  assistantBusy: false,
+  assistantDraft: '',
+  assistantMessages: [],
+  assistantRequestId: 0,
   view: 'overview',
   memberFilter: 'all',
   memberSearch: '',
@@ -141,6 +147,11 @@ async function api(url, options = {}) {
     if (response.status === 401 && state.user) {
       state.user = null;
       state.modal = null;
+      state.assistantOpen = false;
+      state.assistantBusy = false;
+      state.assistantDraft = '';
+      state.assistantMessages = [];
+      state.assistantRequestId += 1;
       stopPolling();
       renderLogin('Your session expired. Sign in again to continue.');
     }
@@ -449,20 +460,20 @@ function renderCampaigns() {
   const offerRecipients = state.campaignRecipients.length
     ? state.campaignRecipients.slice(0, 8).map((recipient) => `<div class="campaign-person-row"><div class="member-avatar ${avatarClass(recipient.id)}">${esc(initials(recipient.name))}</div><div class="member-main"><strong>${esc(recipient.name)}</strong><small>${esc(recipient.email)}</small></div><span class="consent-check">${icon('check')}</span></div>`).join('')
     : `<div class="empty-mini">No members have promotional email consent yet. Edit a member profile and record their permission first.</div>`;
-  return `${renderPageHeading('Email campaigns', 'Send gym news and special offers to members who agreed to promotional emails.', '')}
+  return `${renderPageHeading('Email campaigns', 'Reach current and former members who agreed to promotional email. Membership expiry does not remove their contact.', '')}
     ${!configured ? `<div class="notice-banner">${icon('mail')}<div><strong>Set up email delivery before sending</strong><p>Campaigns use your verified SMTP sender. Configure SMTP in Settings; test emails go only to your owner account.</p></div><button class="notice-action" type="button" data-view="settings">Email settings ${icon('arrow')}</button></div>` : ''}
     <div class="campaign-layout">
       <section class="panel campaign-composer panel-pad"><div class="panel-head"><div><h3 class="panel-title">Compose an email</h3><p class="panel-subtitle">Write your message in HTML and test it in your own inbox before sending.</p></div><span class="email-status${configured ? ' ready' : ''}"><i></i>${configured ? 'SMTP ready' : 'Not connected'}</span></div>
         <form id="campaign-form" class="form-grid">
           <div class="form-row"><div class="field"><label for="campaign-sender-name">Sender name</label><input class="control" id="campaign-sender-name" name="senderName" maxlength="80" value="${esc(state.campaignSenderName)}" placeholder="Your gym" required></div><div class="field"><label for="campaign-sender-email">Verified sender email</label><input class="control" id="campaign-sender-email" name="senderEmail" type="email" value="${esc(state.campaignSenderEmail)}" placeholder="Configure SMTP first" required><p class="form-hint">Must match the verified address in SMTP_FROM.</p></div></div>
-          <div class="field"><div class="field-label-row"><label for="campaign-recipients">Recipient email list</label><button class="panel-link" type="button" data-action="campaign-select-all" ${state.campaignRecipients.length ? '' : 'disabled'}>Use ${Math.min(state.campaignRecipients.length, 100)} opted-in ${Math.min(state.campaignRecipients.length, 100) === 1 ? 'member' : 'members'}${state.campaignRecipients.length > 100 ? ' (max)' : ''}</button></div><textarea class="control campaign-recipient-input" id="campaign-recipients" name="recipientList" placeholder="One opted-in member email per line">${esc(state.campaignRecipientText)}</textarea><p class="form-hint">Only existing members with explicit promotional email consent are allowed. Up to 100 recipients per send; the first 100 are selected by default.</p></div>
+          <div class="field"><div class="field-label-row"><label for="campaign-recipients">Recipient email list</label><button class="panel-link" type="button" data-action="campaign-select-all" ${state.campaignRecipients.length ? '' : 'disabled'}>Use ${Math.min(state.campaignRecipients.length, 100)} opted-in ${Math.min(state.campaignRecipients.length, 100) === 1 ? 'member' : 'members'}${state.campaignRecipients.length > 100 ? ' (max)' : ''}</button></div><textarea class="control campaign-recipient-input" id="campaign-recipients" name="recipientList" placeholder="One opted-in member email per line">${esc(state.campaignRecipientText)}</textarea><p class="form-hint">All saved contacts with explicit promotional email consent are eligible, even after membership expiry. Up to 100 recipients per send; the first 100 are selected by default.</p></div>
           <div class="field"><label for="campaign-subject">Subject</label><input class="control" id="campaign-subject" name="subject" maxlength="180" value="${esc(state.campaignSubject)}" placeholder="A special offer from ${esc(state.config?.gymName || 'your gym')}" required></div>
           <div class="field"><div class="field-label-row"><label for="campaign-html">Email body (HTML supported)</label><div class="template-actions"><button class="panel-link" type="button" data-action="campaign-template-blackfriday">Black Friday template</button><button class="panel-link" type="button" data-action="campaign-template-simple">Simple template</button></div></div><textarea class="control campaign-html-input" id="campaign-html" name="htmlBody" spellcheck="false" placeholder="Write or paste email-safe HTML here…" required>${esc(state.campaignHtmlBody)}</textarea><p class="form-hint">Unsafe scripts and links are removed before sending. Replace template details, dates and terms; the verified sender is also the reply-to address for opt-out requests.</p></div>
           <div class="campaign-preview-wrap"><div class="field-label-row"><strong>Email preview</strong><span>Sandboxed preview · scripts disabled</span></div><iframe id="campaign-preview" class="campaign-preview-frame" title="Email preview" sandbox=""></iframe></div>
           <div class="campaign-actions"><button class="button button-secondary" type="button" data-action="test-campaign" ${configured ? '' : 'disabled'}>${icon('mail')}Send test to owner</button><button class="button button-primary" type="submit" ${canSend ? '' : 'disabled'}>${icon('send')}Queue campaign</button></div>
         </form>
       </section>
-      <aside class="campaign-side-stack"><section class="panel panel-pad"><div class="panel-head"><div><h3 class="panel-title">Eligible members</h3><p class="panel-subtitle">Only this consented list can receive offers.</p></div><span class="campaign-count">${state.campaignRecipients.length}</span></div><div class="campaign-audience-list">${offerRecipients}${state.campaignRecipients.length > 8 ? `<div class="form-hint" style="padding:10px 0">And ${state.campaignRecipients.length - 8} more opted-in members.</div>` : ''}</div><div class="campaign-consent-note">${icon('shield')}Promotional permission is separate from membership-expiry reminder permission. Untick it on a member profile to stop future campaign emails.</div></section>
+      <aside class="campaign-side-stack"><section class="panel panel-pad"><div class="panel-head"><div><h3 class="panel-title">Eligible contacts</h3><p class="panel-subtitle">Current and former members who opted in.</p></div><span class="campaign-count">${state.campaignRecipients.length}</span></div><div class="campaign-audience-list">${offerRecipients}${state.campaignRecipients.length > 8 ? `<div class="form-hint" style="padding:10px 0">And ${state.campaignRecipients.length - 8} more opted-in members.</div>` : ''}</div><div class="campaign-consent-note">${icon('shield')}Promotional permission is separate from expiry reminders. Former members stay eligible if their record and opt-in remain; turn it off in the profile to stop future campaigns.</div></section>
         <section class="panel panel-pad"><div class="panel-head"><div><h3 class="panel-title">Campaign history</h3><p class="panel-subtitle">Delivery status for recent emails</p></div><button class="button-icon" type="button" data-action="refresh" title="Refresh campaign status">${icon('refresh')}</button></div>${renderCampaignHistory()}</section>
       </aside>
     </div>`;
@@ -522,6 +533,19 @@ APP_URL=http://localhost:3000</pre><ol class="email-step"><li>Copy <code>.env.ex
   </section>`;
 }
 
+function renderAssistantSetupCard() {
+  const configured = Boolean(state.config?.aiConfigured);
+  const status = configured ? `<span class="email-status ready"><i></i>Assistant connected</span>` : `<span class="email-status"><i></i>Setup required</span>`;
+  return `<section class="panel settings-card"><div class="settings-heading"><span class="settings-icon">${icon('sparkle')}</span><div style="flex:1"><h3>AI assistant</h3><p>Floating Gymflow chat for owner questions, using relevant dashboard data.</p></div>${status}</div>
+    ${configured ? `<div class="notice-banner" style="margin-bottom:13px;background:#f1f8ef;border-color:#dcebd5;color:#58724e">${icon('check')}<div><strong style="color:#456440">Ready to help</strong><p>Configured model: ${esc(state.config.aiModel || 'server-selected model')}</p></div></div>` : ''}
+    <p class="form-hint" style="font-size:10px;margin:0 0 8px">Configure an OpenAI-compatible chat-completions provider in the server environment, then restart Gymflow. Credentials are never sent to the browser.</p>
+    <pre class="code-snippet">AI_API_KEY=your-provider-api-key
+AI_MODEL=gpt-4o-mini
+AI_API_BASE_URL=https://api.openai.com/v1</pre>
+    <p class="form-hint">Chat history stays in this browser session only. The assistant receives limited gym context; member phone numbers, email addresses and private notes are excluded.</p>
+  </section>`;
+}
+
 function renderSettings() {
   const config = state.config || {};
   return `${renderPageHeading('Settings', 'Set up your gym, membership plans, reminder email and local data.', '')}
@@ -539,6 +563,7 @@ function renderSettings() {
         </section>
       </div>
       <div class="settings-stack">
+        ${renderAssistantSetupCard()}
         ${renderEmailSetupCard()}
         <section class="panel settings-card"><div class="settings-heading"><span class="settings-icon">${icon('database')}</span><div><h3>Local data and backups</h3><p>Your data is stored in a SQLite file on this computer. Back it up regularly.</p></div></div>
           <div class="locked-note">${icon('info')}This is a single-server database. Keep the dashboard server running on the computer or VPS that owns the data. Never share your SQLite file publicly.</div>
@@ -566,9 +591,10 @@ function renderCurrentView() {
 function renderApp() {
   if (!state.user) return;
   const shellClass = `app-shell${state.mobileNavOpen ? ' mobile-nav-open' : ''}`;
-  appRoot.innerHTML = `<div class="${shellClass}">${renderSidebar()}<div class="screen-overlay" data-action="close-mobile-nav"></div><main class="app-main">${renderTopbar()}<div class="content-wrap" id="content-view">${renderCurrentView()}</div></main>${state.modal ? renderModal() : ''}</div>`;
+  appRoot.innerHTML = `<div class="${shellClass}">${renderSidebar()}<div class="screen-overlay" data-action="close-mobile-nav"></div><main class="app-main">${renderTopbar()}<div class="content-wrap" id="content-view">${renderCurrentView()}</div></main>${state.modal ? renderModal() : ''}${renderAssistantWidget()}</div>`;
   document.title = `${viewTitles[state.view]?.[1] || 'Overview'} — ${state.config?.gymName || 'Gymflow'}`;
   if (state.view === 'campaigns') updateCampaignPreview();
+  if (state.assistantOpen) scrollAssistantToBottom();
 }
 
 function selectPlans(selectedId) {
@@ -667,6 +693,60 @@ function renderModal() {
     case 'payment': return renderPaymentModal();
     case 'plan': return renderPlanModal();
     default: return '';
+  }
+}
+
+function assistantMessageMarkup(message) {
+  const content = esc(message.content || '').replace(/\n/g, '<br>');
+  return `<article class="assistant-message ${message.role === 'user' ? 'assistant-message-user' : 'assistant-message-bot'}${message.error ? ' assistant-message-error' : ''}"><div class="assistant-message-label">${message.role === 'user' ? 'You' : 'Gymflow Assistant'}</div><div class="assistant-message-content">${content}</div></article>`;
+}
+
+function renderAssistantWidget() {
+  const configured = Boolean(state.config?.aiConfigured);
+  const messages = state.assistantMessages.length
+    ? state.assistantMessages.map(assistantMessageMarkup).join('')
+    : `<div class="assistant-empty"><div class="assistant-empty-icon">${icon('sparkle')}</div><strong>How can I help?</strong><p>Ask about Gymflow, memberships, cash collection, campaigns or what your dashboard numbers mean.</p><span>Member answers use a limited, private-data-free snapshot.</span></div>`;
+  const panel = state.assistantOpen ? `<section class="assistant-panel" id="assistant-panel" role="dialog" aria-modal="false" aria-labelledby="assistant-title">
+    <header class="assistant-header"><div class="assistant-brand-mark">${icon('sparkle')}</div><div class="assistant-heading"><h2 id="assistant-title">Gymflow Assistant</h2><p><span class="assistant-status-dot"></span>${configured ? 'Here to help' : 'Setup needed'}</p></div><button class="assistant-close" type="button" data-action="assistant-close" aria-label="Close assistant">${icon('close')}</button></header>
+    <div class="assistant-messages" id="assistant-messages" role="log" aria-live="polite" aria-relevant="additions text">${messages}${state.assistantBusy ? `<div class="assistant-typing" aria-label="Assistant is thinking"><span></span><span></span><span></span></div>` : ''}</div>
+    ${!configured ? `<div class="assistant-setup-note" role="status">Ask your administrator to configure <code>AI_API_KEY</code> in the server environment. Provider credentials remain server-side.</div>` : ''}
+    <form class="assistant-form" id="assistant-chat-form"><label class="sr-only" for="assistant-message-input">Message the Gymflow Assistant</label><textarea id="assistant-message-input" name="message" rows="1" maxlength="2000" placeholder="Ask Gymflow Assistant…" ${configured && !state.assistantBusy ? '' : 'disabled'}>${esc(state.assistantDraft)}</textarea><button type="submit" aria-label="Send message" title="Send message" ${configured && !state.assistantBusy ? '' : 'disabled'}>${state.assistantBusy ? '<span class="assistant-send-spinner"></span>' : icon('send')}</button></form>
+    <p class="assistant-disclaimer">AI can make mistakes. Verify important member details in Gymflow.</p>
+  </section>` : '';
+  return `<div class="assistant-widget ${state.assistantOpen ? 'assistant-widget-open' : ''}">${panel}<button class="assistant-launcher" type="button" data-action="assistant-toggle" aria-label="${state.assistantOpen ? 'Close Gymflow Assistant' : 'Open Gymflow Assistant'}" aria-expanded="${state.assistantOpen}"${state.assistantOpen ? ' aria-controls="assistant-panel"' : ''}>${icon(state.assistantOpen ? 'close' : 'chat')}</button></div>`;
+}
+
+function scrollAssistantToBottom() {
+  const messages = document.getElementById('assistant-messages');
+  if (messages) messages.scrollTop = messages.scrollHeight;
+}
+
+function addAssistantMessage(message) {
+  state.assistantMessages.push(message);
+  if (state.assistantMessages.length > 40) state.assistantMessages.splice(0, state.assistantMessages.length - 40);
+}
+
+async function submitAssistant(form) {
+  const input = form.querySelector('textarea[name="message"]');
+  const message = String(input?.value || '').trim();
+  if (!message || state.assistantBusy) return;
+  const history = state.assistantMessages.filter((item) => !item.error).slice(-6).map(({ role, content }) => ({ role, content }));
+  addAssistantMessage({ role: 'user', content: message });
+  const requestId = ++state.assistantRequestId;
+  state.assistantDraft = '';
+  state.assistantBusy = true;
+  renderApp();
+  try {
+    const response = await api('/api/assistant/chat', { method: 'POST', body: JSON.stringify({ message, history }) });
+    if (state.user && requestId === state.assistantRequestId) addAssistantMessage({ role: 'assistant', content: response.answer });
+  } catch (error) {
+    if (state.user && requestId === state.assistantRequestId) addAssistantMessage({ role: 'assistant', content: error.message || 'I could not answer just now. Please try again.', error: true });
+  } finally {
+    if (requestId === state.assistantRequestId) {
+      state.assistantBusy = false;
+      renderApp();
+      if (state.assistantOpen) document.getElementById('assistant-message-input')?.focus();
+    }
   }
 }
 
@@ -830,10 +910,22 @@ async function handleAction(action, element) {
   switch (action) {
     case 'open-mobile-nav': state.mobileNavOpen = true; renderApp(); break;
     case 'close-mobile-nav': state.mobileNavOpen = false; renderApp(); break;
+    case 'assistant-toggle': {
+      state.assistantOpen = !state.assistantOpen;
+      renderApp();
+      const assistantInput = document.getElementById('assistant-message-input');
+      (state.assistantOpen ? (assistantInput?.disabled ? appRoot.querySelector('.assistant-close') : assistantInput) : appRoot.querySelector('[data-action="assistant-toggle"]'))?.focus();
+      break;
+    }
+    case 'assistant-close':
+      state.assistantOpen = false;
+      renderApp();
+      appRoot.querySelector('[data-action="assistant-toggle"]')?.focus();
+      break;
     case 'close-modal': state.modal = null; renderApp(); break;
     case 'logout': {
       try { await api('/api/logout', { method: 'POST', body: '{}' }); } catch {}
-      state.user = null; state.modal = null; stopPolling(); renderLogin();
+      state.user = null; state.modal = null; state.assistantOpen = false; state.assistantBusy = false; state.assistantDraft = ''; state.assistantMessages = []; state.assistantRequestId += 1; stopPolling(); renderLogin();
       break;
     }
     case 'new-member': openMemberModal(); break;
@@ -951,7 +1043,22 @@ appRoot.addEventListener('input', (event) => {
     state.campaignHtmlBody = event.target.value;
     updateCampaignPreview();
   }
+  if (event.target.id === 'assistant-message-input') state.assistantDraft = event.target.value;
   updateCampaignSendButton();
+});
+
+appRoot.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && state.assistantOpen) {
+    event.preventDefault();
+    state.assistantOpen = false;
+    renderApp();
+    appRoot.querySelector('[data-action="assistant-toggle"]')?.focus();
+    return;
+  }
+  if (event.target.id === 'assistant-message-input' && event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    event.target.form?.requestSubmit();
+  }
 });
 
 appRoot.addEventListener('change', (event) => {
@@ -975,6 +1082,10 @@ appRoot.addEventListener('change', (event) => {
 appRoot.addEventListener('submit', async (event) => {
   const form = event.target;
   event.preventDefault();
+  if (form.id === 'assistant-chat-form') {
+    await submitAssistant(form);
+    return;
+  }
   const button = form.querySelector('button[type="submit"]');
   const values = new FormData(form);
   setBusy(button, true, 'Saving…');
@@ -1037,7 +1148,7 @@ appRoot.addEventListener('submit', async (event) => {
       const body = Object.fromEntries(values);
       const recipientList = [...new Set(String(body.recipientList || '').split(/[\s,;]+/).filter(Boolean).map((email) => email.toLowerCase()))];
       if (!recipientList.length) throw new Error('Enter at least one opted-in member email address.');
-      if (!window.confirm(`Queue this campaign for ${recipientList.length} recipient${recipientList.length === 1 ? '' : 's'}? Only existing members who agreed to promotional email can receive it.`)) {
+      if (!window.confirm(`Queue this campaign for ${recipientList.length} contact${recipientList.length === 1 ? '' : 's'}? Only saved current or former members who agreed to promotional email can receive it.`)) {
         setBusy(button, false);
         return;
       }
@@ -1045,7 +1156,7 @@ appRoot.addEventListener('submit', async (event) => {
       state.campaignSubject = '';
       state.campaignRecipientText = '';
       await loadData();
-      showToast(`Campaign queued for ${result.recipientCount} opted-in member${result.recipientCount === 1 ? '' : 's'}.`);
+      showToast(`Campaign queued for ${result.recipientCount} opted-in contact${result.recipientCount === 1 ? '' : 's'}.`);
     } else if (form.id === 'settings-form') {
       const body = Object.fromEntries(values);
       if (state.config?.currencyLocked) delete body.currency;
