@@ -37,9 +37,10 @@ Then open **http://localhost:3000**. To stop it, press `Ctrl+C` or run `docker c
 After signing in:
 
 1. Open **Settings → Membership plans** and add your real plan names, durations and prices.
-2. Open **Members → Add member**, select a plan and set the membership start date.
-3. Leave **Cash has been received and confirmed** unticked until cash is actually in hand. You can record full or partial cash later from the member profile.
-4. Use **Load sample data** on the empty dashboard if you want to explore the charts first. The sample records are fictional and can be removed in Settings.
+2. Open **Members → Add member** and enter the member's full name, phone number and email. Choose the membership plan and start date; the countdown and dashboard statistics update automatically from these records.
+3. Record the member's permissions separately: expiry reminders and promotional emails are independent opt-ins. Leave both unchecked unless the member has agreed.
+4. Leave **Cash has been received and confirmed** unticked until cash is actually in hand. You can record full or partial cash later from the member profile.
+5. Use **Load sample data** on the empty dashboard if you want to explore the charts first. The sample records are fictional and can be removed in Settings.
 
 Monthly plans use calendar months; the membership runs through the day before its next monthly anniversary. Day-based plans are also supported. Money is stored as integer minor units (including three decimal places for TND).
 
@@ -50,9 +51,10 @@ The dashboard checks each minute for opted-in members whose active membership is
 **Real email delivery needs SMTP credentials.** Without them, the app still works and shows the email queue, but it will not send email. To configure a provider:
 
 1. Copy `.env.example` to `.env` in this folder.
-2. Fill in the SMTP host, port, TLS setting, username, password/app password, and verified sender address.
+2. Fill in the SMTP host, port, TLS setting, username, password/app password, and a sender address verified with your provider.
 3. Set `APP_URL` to the address members should see in reminder emails.
-4. Restart the app and use **Settings → Send test email**.
+4. Restart the app and use **Settings → Send test email**. The test goes only to the signed-in owner.
+5. Open **Email campaigns** to compose an HTML-supported promotion, preview it, and send a test to the owner inbox before queuing the actual campaign.
 
 Example configuration:
 
@@ -66,7 +68,13 @@ SMTP_FROM="Your Gym <verified-sender@example.com>"
 APP_URL=http://localhost:3000
 ```
 
-The app never returns SMTP credentials to the browser. Do not commit `.env` or share it in chat. Check your email provider's free-tier limits and sender-verification requirements.
+### Promotional campaign safeguards
+
+- Campaign recipients are selected from member records with a separate **promotional email permission**. A reminder opt-in does not allow marketing, and the owner cannot add an arbitrary/non-consenting address to a send.
+- Consent and the email address are checked again immediately before each queued send. If either changes, that recipient is skipped.
+- Campaign sender email must exactly match the address in `SMTP_FROM`; that address should be verified by your SMTP provider. Test campaigns go only to the owner account.
+- HTML is sanitized before delivery. Campaigns are queued and sent in small batches; transient SMTP failures are retried up to three attempts. Add a visible opt-out link/instructions appropriate to your local rules if your provider or jurisdiction requires one; members can also reply to the sender and the owner should remove promotional permission in the member profile.
+- SMTP credentials stay server-side. Do not commit `.env` or share it in chat. Check your email provider's free-tier limits and sender-verification requirements before using real member addresses.
 
 ## Data, backups and exports
 
@@ -81,6 +89,6 @@ For an always-on VPS later, deploy behind HTTPS with a firewall and regular off-
 
 ## Current first-release scope
 
-Included: owner login and password changes, members, configurable plans, monthly/day durations, membership history, expiry countdowns, expiring/expired views, manual cash-payment confirmation (including partial payments), cash collection summaries, email reminder queue and SMTP delivery, insights, CSV exports, SQLite backups, and fictional sample data.
+Included: owner-only login and password changes, members with required name/phone/email, configurable plans and durations, membership history and expiry countdowns, separate reminder and marketing consent, manual cash-payment confirmation (including partial payments), cash collection summaries, reminder and promotional email queues, HTML campaign preview/test sending with SMTP safeguards, insights, CSV exports, SQLite backups, and fictional sample data.
 
-Not included yet: WhatsApp, staff accounts, attendance/check-in, expenses and profit calculations, AI assistant, online payments, and member self-service. Those should be added after this workflow has been tested with real gym rules.
+Not included yet: WhatsApp, staff accounts, attendance/check-in, expenses and profit calculations, natural-language AI assistance (requires a separately configured model/API), online payments, and member self-service.

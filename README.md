@@ -2,7 +2,7 @@
 
 The existing CBK shop pages (`index.html` and `admin.html`) are unchanged.
 
-A separate Gymflow full-stack gym-management app is in [`gym-app/`](gym-app/README.md). It uses a local SQLite database, supports member and membership management, admin-confirmed cash payments, expiry reminders by email, reports, CSV export and database backups.
+A separate Gymflow full-stack gym-management app is in [`gym-app/`](gym-app/README.md). It uses a local SQLite database, provides an owner-only dashboard, member and membership management, admin-confirmed cash payments, consent-based email reminders and promotional campaigns, reports, CSV export and database backups.
 
 ## Quick start
 

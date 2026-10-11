@@ -15,6 +15,7 @@ const iconPaths = {
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
   logout: '<path d="M10 17l5-5-5-5M15 12H3"/><path d="M12 3h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-7"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
   close: '<path d="m18 6-12 12M6 6l12 12"/>',
@@ -43,6 +44,9 @@ const state = {
   plans: [],
   payments: [],
   reminders: [],
+  campaigns: [],
+  campaignRecipients: [],
+  campaignRecipientText: null,
   view: 'overview',
   memberFilter: 'all',
   memberSearch: '',
@@ -229,6 +233,7 @@ const viewTitles = {
   overview: ['Workspace', 'Overview'],
   members: ['Manage members', 'Members'],
   payments: ['Cash collection', 'Payments'],
+  campaigns: ['Member communications', 'Email campaigns'],
   insights: ['Understand your numbers', 'Insights'],
   settings: ['Workspace setup', 'Settings'],
 };
@@ -246,6 +251,7 @@ function renderSidebar() {
       ${navItem('overview', 'Overview', 'home')}
       ${navItem('members', 'Members', 'users', expiringCount ? String(expiringCount) : '')}
       ${navItem('payments', 'Payments', 'cash')}
+      ${navItem('campaigns', 'Email campaigns', 'send')}
       ${navItem('insights', 'Insights', 'chart')}
     </nav>
     <div class="sidebar-label">Manage</div>
@@ -400,6 +406,68 @@ function renderPayments() {
     <section class="panel table-card">${renderPaymentsTable()}</section>`;
 }
 
+function renderCampaignHistory() {
+  if (!state.campaigns.length) return `<div class="empty-mini">Your sent campaigns will appear here.</div>`;
+  return `<div class="campaign-history-list">${state.campaigns.map((campaign) => `<div class="campaign-history-row"><div class="campaign-history-icon">${icon('send')}</div><div class="member-main"><strong>${esc(campaign.subject)}</strong><small>${esc(dateTimeLabel(campaign.createdAt))} · ${campaign.recipientCount} recipient${campaign.recipientCount === 1 ? '' : 's'} · ${campaign.sentCount} sent${campaign.failedCount ? ` · ${campaign.failedCount} failed` : ''}${campaign.skippedCount ? ` · ${campaign.skippedCount} skipped` : ''}</small></div><span class="status-pill status-${esc(campaign.status)}">${esc(campaign.status)}</span></div>`).join('')}</div>`;
+}
+
+function safeCampaignPreview(html) {
+  const documentCopy = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  documentCopy.querySelectorAll('script, iframe, object, embed, form, meta, base, link, style, svg, math').forEach((node) => node.remove());
+  for (const element of documentCopy.body.querySelectorAll('*')) {
+    for (const attribute of [...element.attributes]) {
+      if (/^on/i.test(attribute.name)) element.removeAttribute(attribute.name);
+      if (['href', 'src', 'action', 'formaction'].includes(attribute.name.toLowerCase()) && /^\s*javascript:/i.test(attribute.value)) element.removeAttribute(attribute.name);
+    }
+  }
+  return documentCopy.body.innerHTML;
+}
+
+function updateCampaignPreview() {
+  const frame = document.getElementById('campaign-preview');
+  if (!frame) return;
+  const html = safeCampaignPreview(document.getElementById('campaign-html')?.value || '');
+  frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'"></head><body style="margin:0;padding:20px;background:#fff;font:14px/1.55 Arial,sans-serif;color:#1d2c24">${html}</body></html>`;
+}
+
+function updateCampaignSendButton() {
+  const button = document.querySelector('#campaign-form button[type="submit"]');
+  if (!button) return;
+  const hasRecipients = String(state.campaignRecipientText || '').split(/[\s,;]+/).some(Boolean);
+  button.disabled = !(state.config?.smtpConfigured && state.config?.smtpSenderEmail && state.campaignRecipients.length && hasRecipients);
+}
+
+function renderCampaigns() {
+  if (state.campaignRecipientText === null) state.campaignRecipientText = state.campaignRecipients.slice(0, 100).map((recipient) => recipient.email).join('\n');
+  if (state.campaignSenderName === undefined) state.campaignSenderName = state.config?.gymName || '';
+  if (state.campaignSenderEmail === undefined) state.campaignSenderEmail = state.config?.smtpSenderEmail || '';
+  if (state.campaignSubject === undefined) state.campaignSubject = '';
+  if (state.campaignHtmlBody === undefined) state.campaignHtmlBody = '<h1>Black Friday is here!</h1><p>Enjoy a special offer at <strong>your gym</strong>.</p><p><strong>Offer details:</strong> Add the price, dates and terms before sending.</p><p>Visit the gym or reply to this email to renew.</p>';
+  const configured = Boolean(state.config?.smtpConfigured && state.config?.smtpSenderEmail);
+  const hasCampaignRecipients = String(state.campaignRecipientText || '').split(/[\s,;]+/).filter(Boolean).length > 0;
+  const canSend = configured && state.campaignRecipients.length > 0 && hasCampaignRecipients;
+  const offerRecipients = state.campaignRecipients.length
+    ? state.campaignRecipients.slice(0, 8).map((recipient) => `<div class="campaign-person-row"><div class="member-avatar ${avatarClass(recipient.id)}">${esc(initials(recipient.name))}</div><div class="member-main"><strong>${esc(recipient.name)}</strong><small>${esc(recipient.email)}</small></div><span class="consent-check">${icon('check')}</span></div>`).join('')
+    : `<div class="empty-mini">No members have promotional email consent yet. Edit a member profile and record their permission first.</div>`;
+  return `${renderPageHeading('Email campaigns', 'Send gym news and special offers to members who agreed to promotional emails.', '')}
+    ${!configured ? `<div class="notice-banner">${icon('mail')}<div><strong>Set up email delivery before sending</strong><p>Campaigns use your verified SMTP sender. Configure SMTP in Settings; test emails go only to your owner account.</p></div><button class="notice-action" type="button" data-view="settings">Email settings ${icon('arrow')}</button></div>` : ''}
+    <div class="campaign-layout">
+      <section class="panel campaign-composer panel-pad"><div class="panel-head"><div><h3 class="panel-title">Compose an email</h3><p class="panel-subtitle">Write your message in HTML and test it in your own inbox before sending.</p></div><span class="email-status${configured ? ' ready' : ''}"><i></i>${configured ? 'SMTP ready' : 'Not connected'}</span></div>
+        <form id="campaign-form" class="form-grid">
+          <div class="form-row"><div class="field"><label for="campaign-sender-name">Sender name</label><input class="control" id="campaign-sender-name" name="senderName" maxlength="80" value="${esc(state.campaignSenderName)}" placeholder="Your gym" required></div><div class="field"><label for="campaign-sender-email">Verified sender email</label><input class="control" id="campaign-sender-email" name="senderEmail" type="email" value="${esc(state.campaignSenderEmail)}" placeholder="Configure SMTP first" required><p class="form-hint">Must match the verified address in SMTP_FROM.</p></div></div>
+          <div class="field"><div class="field-label-row"><label for="campaign-recipients">Recipient email list</label><button class="panel-link" type="button" data-action="campaign-select-all" ${state.campaignRecipients.length ? '' : 'disabled'}>Use ${Math.min(state.campaignRecipients.length, 100)} opted-in ${Math.min(state.campaignRecipients.length, 100) === 1 ? 'member' : 'members'}${state.campaignRecipients.length > 100 ? ' (max)' : ''}</button></div><textarea class="control campaign-recipient-input" id="campaign-recipients" name="recipientList" placeholder="One opted-in member email per line">${esc(state.campaignRecipientText)}</textarea><p class="form-hint">Only existing members with explicit promotional email consent are allowed. Up to 100 recipients per send; the first 100 are selected by default.</p></div>
+          <div class="field"><label for="campaign-subject">Subject</label><input class="control" id="campaign-subject" name="subject" maxlength="180" value="${esc(state.campaignSubject)}" placeholder="A special offer from ${esc(state.config?.gymName || 'your gym')}" required></div>
+          <div class="field"><div class="field-label-row"><label for="campaign-html">Email body (HTML supported)</label><div class="template-actions"><button class="panel-link" type="button" data-action="campaign-template-blackfriday">Black Friday template</button><button class="panel-link" type="button" data-action="campaign-template-simple">Simple template</button></div></div><textarea class="control campaign-html-input" id="campaign-html" name="htmlBody" spellcheck="false" placeholder="Write or paste email-safe HTML here…" required>${esc(state.campaignHtmlBody)}</textarea><p class="form-hint">Unsafe scripts and links are removed before sending. Replace template details, dates and terms; the verified sender is also the reply-to address for opt-out requests.</p></div>
+          <div class="campaign-preview-wrap"><div class="field-label-row"><strong>Email preview</strong><span>Sandboxed preview · scripts disabled</span></div><iframe id="campaign-preview" class="campaign-preview-frame" title="Email preview" sandbox=""></iframe></div>
+          <div class="campaign-actions"><button class="button button-secondary" type="button" data-action="test-campaign" ${configured ? '' : 'disabled'}>${icon('mail')}Send test to owner</button><button class="button button-primary" type="submit" ${canSend ? '' : 'disabled'}>${icon('send')}Queue campaign</button></div>
+        </form>
+      </section>
+      <aside class="campaign-side-stack"><section class="panel panel-pad"><div class="panel-head"><div><h3 class="panel-title">Eligible members</h3><p class="panel-subtitle">Only this consented list can receive offers.</p></div><span class="campaign-count">${state.campaignRecipients.length}</span></div><div class="campaign-audience-list">${offerRecipients}${state.campaignRecipients.length > 8 ? `<div class="form-hint" style="padding:10px 0">And ${state.campaignRecipients.length - 8} more opted-in members.</div>` : ''}</div><div class="campaign-consent-note">${icon('shield')}Promotional permission is separate from membership-expiry reminder permission. Untick it on a member profile to stop future campaign emails.</div></section>
+        <section class="panel panel-pad"><div class="panel-head"><div><h3 class="panel-title">Campaign history</h3><p class="panel-subtitle">Delivery status for recent emails</p></div><button class="button-icon" type="button" data-action="refresh" title="Refresh campaign status">${icon('refresh')}</button></div>${renderCampaignHistory()}</section>
+      </aside>
+    </div>`;
+}
+
 function renderInsights() {
   if (!state.overview) return `<div class="loading-inline"><span class="boot-spinner"></span>Preparing insights…</div>`;
   const stats = state.overview.stats;
@@ -441,15 +509,15 @@ function renderReminderHistory() {
 function renderEmailSetupCard() {
   const configured = Boolean(state.config?.smtpConfigured);
   const status = configured ? `<span class="email-status ready"><i></i>Email delivery connected</span>` : `<span class="email-status"><i></i>SMTP setup required</span>`;
-  return `<section class="panel settings-card"><div class="settings-heading"><span class="settings-icon">${icon('mail')}</span><div style="flex:1"><h3>Email reminders</h3><p>Send reminders 7 days and 4 days before membership expiry, if the member agreed to email reminders.</p></div>${status}</div>
+  return `<section class="panel settings-card"><div class="settings-heading"><span class="settings-icon">${icon('mail')}</span><div style="flex:1"><h3>Email delivery</h3><p>Send expiry reminders and promotional campaigns from your verified SMTP sender.</p></div>${status}</div>
     ${configured ? `<div class="notice-banner" style="margin-bottom:13px;background:#f1f8ef;border-color:#dcebd5;color:#58724e">${icon('check')}<div><strong style="color:#456440">Ready to send</strong><p>Sender configured: ${esc(state.config.emailFrom || 'SMTP sender')}</p></div></div>` : `<p class="form-hint" style="font-size:9px;margin:0 0 8px">To enable real email, add SMTP settings to <code>gym-app/.env</code>, then restart the server. An email provider account is needed; no email is sent until configured.</p><pre class="code-snippet">SMTP_HOST=smtp.example.com
 SMTP_PORT=587
 SMTP_SECURE=false
 SMTP_USER=your-smtp-username
 SMTP_PASS=your-smtp-password
 SMTP_FROM="Your Gym &lt;you@example.com&gt;"
-APP_URL=http://localhost:3000</pre><ol class="email-step"><li>Copy <code>.env.example</code> to <code>.env</code>.</li><li>Enter the SMTP details from your email provider. Use an app password if your provider requires one.</li><li>Restart Gymflow and use the test-email button below.</li></ol><p class="form-hint">The scheduler checks every minute while this app is running. Emails require member consent and a valid email address.</p>`}
-    <div class="form-actions" style="margin-top:14px"><button class="button button-secondary" type="button" data-action="test-email" ${configured ? '' : 'disabled'}>${icon('mail')}Send test email</button></div>
+APP_URL=http://localhost:3000</pre><ol class="email-step"><li>Copy <code>.env.example</code> to <code>.env</code>.</li><li>Enter the SMTP details from your email provider. Use an app password if your provider requires one.</li><li>Restart Gymflow and use the test-email button below.</li></ol><p class="form-hint">Expiry reminders require reminder consent. Campaigns require separate promotional consent. The scheduler runs while this app is running; the verified SMTP sender is required for either type.</p>`}
+    <div class="form-actions" style="margin-top:14px"><button class="button button-secondary" type="button" data-action="test-email">${icon('mail')}Send test email</button></div>
     <div class="detail-section"><h4>Recent reminder activity</h4><div class="panel" style="padding:0 12px">${renderReminderHistory()}</div></div>
   </section>`;
 }
@@ -488,6 +556,7 @@ function renderCurrentView() {
   switch (state.view) {
     case 'members': return renderMembers();
     case 'payments': return renderPayments();
+    case 'campaigns': return renderCampaigns();
     case 'insights': return renderInsights();
     case 'settings': return renderSettings();
     default: return renderOverview();
@@ -499,6 +568,7 @@ function renderApp() {
   const shellClass = `app-shell${state.mobileNavOpen ? ' mobile-nav-open' : ''}`;
   appRoot.innerHTML = `<div class="${shellClass}">${renderSidebar()}<div class="screen-overlay" data-action="close-mobile-nav"></div><main class="app-main">${renderTopbar()}<div class="content-wrap" id="content-view">${renderCurrentView()}</div></main>${state.modal ? renderModal() : ''}</div>`;
   document.title = `${viewTitles[state.view]?.[1] || 'Overview'} — ${state.config?.gymName || 'Gymflow'}`;
+  if (state.view === 'campaigns') updateCampaignPreview();
 }
 
 function selectPlans(selectedId) {
@@ -520,17 +590,17 @@ function renderMemberFormModal() {
   const price = isEdit ? '' : inputMoneyFromMinor(firstPlan?.priceMinor || 0);
   const content = `<form id="${isEdit ? 'edit-member-form' : 'member-form'}" class="form-grid">
     ${isEdit ? `<input type="hidden" name="memberId" value="${member.id}">` : ''}
-    <div class="form-row"><div class="field"><label for="member-name">Full name</label><input class="control" id="member-name" name="name" maxlength="120" value="${esc(member.name || '')}" placeholder="Member's full name" required></div><div class="field"><label for="member-phone">Phone <span class="optional">optional</span></label><input class="control" id="member-phone" name="phone" maxlength="40" value="${esc(member.phone || '')}" placeholder="+216 …"></div></div>
-    <div class="field"><label for="member-email">Email address <span class="optional">optional</span></label><input class="control" id="member-email" name="email" type="email" maxlength="254" value="${esc(member.email || '')}" placeholder="member@example.com"></div>
+    <div class="field"><label for="member-name">Full name</label><input class="control" id="member-name" name="name" maxlength="120" value="${esc(member.name || '')}" placeholder="Member's full name" autocomplete="name" required></div>
+    <div class="form-row"><div class="field"><label for="member-phone">Phone number</label><input class="control" id="member-phone" name="phone" maxlength="40" value="${esc(member.phone || '')}" placeholder="+216 …" type="tel" autocomplete="tel" required></div><div class="field"><label for="member-email">Email address</label><input class="control" id="member-email" name="email" type="email" maxlength="254" value="${esc(member.email || '')}" placeholder="member@example.com" autocomplete="email" required></div></div>
     <div class="field"><label for="member-notes">Notes <span class="optional">optional</span></label><textarea class="control" id="member-notes" name="notes" maxlength="1000" placeholder="Anything useful for the gym team…">${esc(member.notes || '')}</textarea></div>
-    <label class="check-row"><input type="checkbox" name="emailOptIn" ${member.emailOptIn ? 'checked' : ''}><span>Member has agreed to receive membership reminder emails.</span></label>
-    ${isEdit ? '' : `<div style="height:1px;background:#eef1ed;margin:2px 0"></div><div class="form-row"><div class="field"><label for="member-plan">Membership plan</label><select class="control" id="member-plan" name="planId" required>${options}</select></div><div class="field"><label for="member-start">Start date</label><input class="control" id="member-start" name="startDate" type="date" value="${esc(modal.startDate || todayString())}" required></div></div>
+    <div class="consent-stack"><label class="check-row"><input type="checkbox" name="emailOptIn" ${member.emailOptIn ? 'checked' : ''}><span>Agreed to membership expiry reminder emails.</span></label><label class="check-row"><input type="checkbox" name="marketingOptIn" ${member.marketingOptIn ? 'checked' : ''}><span>Agreed to gym news and promotional offers.</span></label></div>
+    ${isEdit ? '' : `<div class="membership-setup-block"><div class="membership-setup-heading"><strong>Membership starts tracking automatically</strong><small>Select the plan and start date. Countdown and stats update as soon as this member is saved.</small></div><div class="form-row"><div class="field"><label for="member-plan">Membership plan</label><select class="control" id="member-plan" name="planId" required>${options}</select></div><div class="field"><label for="member-start">Start date</label><input class="control" id="member-start" name="startDate" type="date" value="${esc(modal.startDate || todayString())}" required></div></div>
       <div class="field"><label for="member-price">Agreed membership price (${esc(state.config?.currency || 'TND')})</label><input class="control" id="member-price" name="price" type="number" step="${1 / (10 ** currencyDigits())}" min="0.001" value="${esc(price)}" required><p class="form-hint">Defaults to the plan price. You can adjust it for this member without changing the plan.</p></div>
       <label class="check-row"><input type="checkbox" name="confirmCash" id="confirm-cash"><span><strong>Cash has been received and confirmed</strong><br>Leave unticked if payment is still due. You can confirm cash later from the member record.</span></label>
-      <div class="field confirm-payment-area" hidden><label for="new-payment-amount">Cash received (${esc(state.config?.currency || 'TND')})</label><input class="control" id="new-payment-amount" name="paymentAmount" type="number" step="${1 / (10 ** currencyDigits())}" min="0.001" value="${esc(price)}"><p class="form-hint">Partial cash payments are supported.</p></div>`}
+      <div class="field confirm-payment-area" hidden><label for="new-payment-amount">Cash received (${esc(state.config?.currency || 'TND')})</label><input class="control" id="new-payment-amount" name="paymentAmount" type="number" step="${1 / (10 ** currencyDigits())}" min="0.001" value="${esc(price)}"><p class="form-hint">Partial cash payments are supported.</p></div></div>`}
     <div class="modal-footer"><button class="button button-secondary" type="button" data-action="close-modal">Cancel</button><button class="button button-primary" type="submit">${isEdit ? 'Save member' : 'Add member and membership'} ${icon('check')}</button></div>
   </form>`;
-  return modalShell(isEdit ? 'Edit member details' : 'Add a new member', isEdit ? 'Update their contact details and email permission.' : 'Register the member and choose their first membership plan.', content);
+  return modalShell(isEdit ? 'Edit member details' : 'Add a new member', isEdit ? 'Update their profile and email permissions.' : 'Add their contact details; the membership countdown starts with the selected plan.', content);
 }
 
 function renderRenewModal() {
@@ -580,7 +650,7 @@ function renderMemberDetail() {
   const actionButtons = `<div class="detail-action-row"><button class="button button-secondary button-sm" type="button" data-action="edit-member" data-id="${member.id}">${icon('edit')}Edit</button><button class="button button-secondary button-sm" type="button" data-action="renew-member" data-id="${member.id}">${icon('refresh')}Renew</button>${member.membership && member.outstandingMinor > 0 ? `<button class="button button-accent button-sm" type="button" data-action="confirm-cash" data-id="${member.id}">${icon('cash')}Confirm cash</button>` : ''}</div>`;
   const membershipHistory = memberships.length ? memberships.map((item) => `<div class="history-item"><div><strong>${esc(item.planName)} · ${esc(dateLabel(item.startDate))} – ${esc(dateLabel(item.endDate))}</strong><small>${esc(item.durationValue)} ${item.durationUnit === 'months' ? (item.durationValue === 1 ? 'month' : 'months') : (item.durationValue === 1 ? 'day' : 'days')} · ${membershipStatusBadge(item.status)}</small></div><div class="history-side"><strong>${esc(moneyFromMinor(item.priceMinor))}</strong><small>${item.outstandingMinor > 0 ? `${esc(moneyFromMinor(item.outstandingMinor))} due` : 'Paid in full'}</small></div></div>`).join('') : `<div class="empty-mini">No memberships recorded yet.</div>`;
   const paymentHistory = payments.length ? payments.slice(0, 8).map((payment) => `<div class="history-item"><div><strong>Cash payment · ${esc(dateLabel(payment.paid_on))}</strong><small>${esc(payment.plan_name)}${payment.note ? ` · ${esc(payment.note)}` : ''}</small></div><div class="history-side"><strong>${esc(moneyFromMinor(payment.amountMinor))}</strong><small>Confirmed</small></div></div>`).join('') : `<div class="empty-mini">No cash payments recorded.</div>`;
-  const facts = `<div class="detail-facts"><div class="detail-fact"><span>Email</span><strong>${esc(member.email || 'Not provided')}</strong></div><div class="detail-fact"><span>Phone</span><strong>${esc(member.phone || 'Not provided')}</strong></div><div class="detail-fact"><span>Email reminder consent</span><strong>${member.emailOptIn ? 'Agreed' : 'Not agreed'}</strong></div><div class="detail-fact"><span>Member since</span><strong>${esc(dateLabel(member.createdOn))}</strong></div></div>`;
+  const facts = `<div class="detail-facts"><div class="detail-fact"><span>Email</span><strong>${esc(member.email || 'Not provided')}</strong></div><div class="detail-fact"><span>Phone</span><strong>${esc(member.phone || 'Not provided')}</strong></div><div class="detail-fact"><span>Expiry email permission</span><strong>${member.emailOptIn ? 'Agreed' : 'Not agreed'}</strong></div><div class="detail-fact"><span>Promotional email permission</span><strong>${member.marketingOptIn ? 'Agreed' : 'Not agreed'}</strong></div><div class="detail-fact"><span>Member since</span><strong>${esc(dateLabel(member.createdOn))}</strong></div></div>`;
   const notes = member.notes ? `<div class="detail-section"><h4>Notes</h4><div class="insights-note">${esc(member.notes)}</div></div>` : '';
   const content = `<div class="detail-hero"><div class="member-avatar ${avatarClass(member.id)}">${esc(initials(member.name))}</div><div><h3>${esc(member.name)}</h3><p>${esc(member.membership?.planName || 'No current plan')} · ${member.membership ? esc(relativeDays(member.daysRemaining)) : 'No active membership'}</p></div>${actionButtons}</div>
     ${facts}${notes}<div class="detail-section"><h4>Membership history</h4>${membershipHistory}</div><div class="detail-section"><h4>Cash payments</h4>${paymentHistory}</div>`;
@@ -603,8 +673,8 @@ function renderModal() {
 async function loadData({ quiet = false } = {}) {
   if (!state.user) return;
   try {
-    const [config, overview, plans, members, payments, reminders] = await Promise.all([
-      api('/api/config'), api('/api/overview'), api('/api/plans'), api('/api/members'), api('/api/payments'), api('/api/reminders'),
+    const [config, overview, plans, members, payments, reminders, campaigns, campaignRecipients] = await Promise.all([
+      api('/api/config'), api('/api/overview'), api('/api/plans'), api('/api/members'), api('/api/payments'), api('/api/reminders'), api('/api/campaigns'), api('/api/campaigns/recipients'),
     ]);
     state.config = config;
     state.overview = overview;
@@ -612,6 +682,13 @@ async function loadData({ quiet = false } = {}) {
     state.members = members.members;
     state.payments = payments.payments;
     state.reminders = reminders.reminders;
+    state.campaigns = campaigns.campaigns;
+    state.campaignRecipients = campaignRecipients.recipients;
+    if (state.campaignRecipientText !== null) {
+      const currentlyEligible = new Set(state.campaignRecipients.map((recipient) => recipient.email.toLowerCase()));
+      state.campaignRecipientText = state.campaignRecipientText.split(/[\s,;]+/).filter(Boolean)
+        .filter((email) => currentlyEligible.has(email.toLowerCase())).join('\n');
+    }
     if (!quiet) renderApp();
     else if (!state.modal && !appRoot.querySelector('input:focus, textarea:focus, select:focus')) renderApp();
   } catch (error) {
@@ -656,6 +733,9 @@ function setView(view) {
   state.view = view;
   state.mobileNavOpen = false;
   if (view === 'members') state.memberSearch = '';
+  if (view === 'campaigns' && state.campaignRecipientText === null) {
+    state.campaignRecipientText = state.campaignRecipients.slice(0, 100).map((recipient) => recipient.email).join('\n');
+  }
   renderApp();
 }
 
@@ -763,6 +843,32 @@ async function handleAction(action, element) {
     case 'edit-member': openEditModal(id); break;
     case 'create-plan': openPlanModal(); break;
     case 'edit-plan': openPlanModal(id); break;
+    case 'campaign-select-all':
+      state.campaignRecipientText = state.campaignRecipients.slice(0, 100).map((recipient) => recipient.email).join('\n');
+      renderApp();
+      break;
+    case 'campaign-template-blackfriday':
+      state.campaignSubject = `Black Friday at ${state.config?.gymName || 'your gym'} — limited-time offer`;
+      state.campaignHtmlBody = `<h1 style="font-family:Arial,sans-serif;color:#18332a">Black Friday is here!</h1><p>For a limited time, get a special offer on your next membership at <strong>${esc(state.config?.gymName || 'your gym')}</strong>.</p><p><strong>Offer details:</strong> Add the price, dates and terms before sending.</p><p>Visit the gym or reply to this email to renew.</p>`;
+      renderApp();
+      break;
+    case 'campaign-template-simple':
+      state.campaignSubject = `A quick update from ${state.config?.gymName || 'your gym'}`;
+      state.campaignHtmlBody = `<h2 style="color:#18332a">Hello from ${esc(state.config?.gymName || 'your gym')}</h2><p>We have exciting news to share with you.</p><p>Reply to this email or visit the gym to learn more.</p>`;
+      renderApp();
+      break;
+    case 'test-campaign': {
+      const form = appRoot.querySelector('#campaign-form');
+      if (!form) break;
+      const values = new FormData(form);
+      setBusy(element, true, 'Sending test…');
+      try {
+        const result = await api('/api/campaigns/test', { method: 'POST', body: JSON.stringify({ senderName: values.get('senderName'), senderEmail: values.get('senderEmail'), subject: values.get('subject'), htmlBody: values.get('htmlBody') }) });
+        showToast(`Test email sent to ${result.sentTo}.`);
+      } catch (error) { showToast(error.message, 'error'); }
+      finally { setBusy(element, false); }
+      break;
+    }
     case 'refresh': await loadData(); showToast('Dashboard refreshed.'); break;
     case 'export-members': await downloadFile('/api/export/members.csv', 'gym-members.csv'); break;
     case 'export-payments': await downloadFile('/api/export/payments.csv', 'gym-cash-payments.csv'); break;
@@ -837,6 +943,15 @@ appRoot.addEventListener('input', (event) => {
     state.memberSearch = event.target.value;
     renderMemberRowsOnly();
   }
+  if (event.target.id === 'campaign-recipients') state.campaignRecipientText = event.target.value;
+  if (event.target.id === 'campaign-sender-name') state.campaignSenderName = event.target.value;
+  if (event.target.id === 'campaign-sender-email') state.campaignSenderEmail = event.target.value;
+  if (event.target.id === 'campaign-subject') state.campaignSubject = event.target.value;
+  if (event.target.id === 'campaign-html') {
+    state.campaignHtmlBody = event.target.value;
+    updateCampaignPreview();
+  }
+  updateCampaignSendButton();
 });
 
 appRoot.addEventListener('change', (event) => {
@@ -881,14 +996,16 @@ appRoot.addEventListener('submit', async (event) => {
     } else if (form.id === 'member-form') {
       const body = Object.fromEntries(values);
       body.emailOptIn = values.has('emailOptIn');
+      body.marketingOptIn = values.has('marketingOptIn');
       body.confirmCash = values.has('confirmCash');
       await api('/api/members', { method: 'POST', body: JSON.stringify(body) });
       state.modal = null;
       await loadData();
-      showToast(body.confirmCash ? 'Member added and cash payment confirmed.' : 'Member added. Payment is marked as due.');
+      showToast(body.confirmCash ? 'Member registered and cash confirmed.' : 'Member registered; payment is marked as due.');
     } else if (form.id === 'edit-member-form') {
       const body = Object.fromEntries(values);
       body.emailOptIn = values.has('emailOptIn');
+      body.marketingOptIn = values.has('marketingOptIn');
       await api(`/api/members/${values.get('memberId')}`, { method: 'PATCH', body: JSON.stringify(body) });
       state.modal = null;
       await loadData();
@@ -916,6 +1033,19 @@ appRoot.addEventListener('submit', async (event) => {
       state.modal = null;
       await loadData();
       showToast(planId ? 'Membership plan updated.' : 'Membership plan created.');
+    } else if (form.id === 'campaign-form') {
+      const body = Object.fromEntries(values);
+      const recipientList = [...new Set(String(body.recipientList || '').split(/[\s,;]+/).filter(Boolean).map((email) => email.toLowerCase()))];
+      if (!recipientList.length) throw new Error('Enter at least one opted-in member email address.');
+      if (!window.confirm(`Queue this campaign for ${recipientList.length} recipient${recipientList.length === 1 ? '' : 's'}? Only existing members who agreed to promotional email can receive it.`)) {
+        setBusy(button, false);
+        return;
+      }
+      const result = await api('/api/campaigns/send', { method: 'POST', body: JSON.stringify(body) });
+      state.campaignSubject = '';
+      state.campaignRecipientText = '';
+      await loadData();
+      showToast(`Campaign queued for ${result.recipientCount} opted-in member${result.recipientCount === 1 ? '' : 's'}.`);
     } else if (form.id === 'settings-form') {
       const body = Object.fromEntries(values);
       if (state.config?.currencyLocked) delete body.currency;

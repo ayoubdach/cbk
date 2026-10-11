@@ -1,5 +1,6 @@
 import express from 'express';
 import nodemailer from 'nodemailer';
+import sanitizeHtml from 'sanitize-html';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
@@ -67,6 +68,7 @@ db.exec(`
     phone TEXT,
     notes TEXT NOT NULL DEFAULT '',
     email_opt_in INTEGER NOT NULL DEFAULT 0 CHECK (email_opt_in IN (0, 1)),
+    marketing_opt_in INTEGER NOT NULL DEFAULT 0 CHECK (marketing_opt_in IN (0, 1)),
     created_at TEXT NOT NULL,
     created_on TEXT NOT NULL,
     is_demo INTEGER NOT NULL DEFAULT 0 CHECK (is_demo IN (0, 1))
@@ -135,11 +137,50 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_email_notifications_queue ON email_notifications(status, next_attempt_at);
 
+  CREATE TABLE IF NOT EXISTS email_campaigns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_name TEXT NOT NULL,
+    sender_email TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    html_body TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'sending', 'sent', 'partial', 'failed')),
+    created_at TEXT NOT NULL,
+    created_by INTEGER REFERENCES app_users(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_email_campaigns_created ON email_campaigns(created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS email_campaign_recipients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL REFERENCES email_campaigns(id) ON DELETE CASCADE,
+    member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    recipient TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'sent', 'failed', 'skipped')),
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    sent_at TEXT,
+    UNIQUE (campaign_id, member_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_email_campaign_recipient_queue ON email_campaign_recipients(status, created_at);
+
   CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
 `);
+
+const memberColumns = new Set(db.prepare('PRAGMA table_info(members)').all().map((column) => column.name));
+if (!memberColumns.has('marketing_opt_in')) {
+  db.exec('ALTER TABLE members ADD COLUMN marketing_opt_in INTEGER NOT NULL DEFAULT 0 CHECK (marketing_opt_in IN (0, 1))');
+}
+const campaignRecipientColumns = new Set(db.prepare('PRAGMA table_info(email_campaign_recipients)').all().map((column) => column.name));
+if (!campaignRecipientColumns.has('attempt_count')) {
+  db.exec('ALTER TABLE email_campaign_recipients ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0');
+}
+if (!campaignRecipientColumns.has('next_attempt_at')) {
+  db.exec('ALTER TABLE email_campaign_recipients ADD COLUMN next_attempt_at TEXT');
+}
 
 const settingsDefaults = {
   gym_name: 'Your Gym',
@@ -232,6 +273,89 @@ function normalizePhone(value) {
 
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+}
+
+function configuredSenderEmail() {
+  const from = process.env.SMTP_FROM || '';
+  const address = from.match(/<([^<>]+)>/)?.[1] || from;
+  return normalizeEmail(address);
+}
+
+function sanitizeCampaignHtml(value) {
+  const safeTags = [...new Set([
+    ...sanitizeHtml.defaults.allowedTags,
+    'h1', 'h2', 'h3', 'h4', 'img', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th', 'center',
+  ])];
+  return sanitizeHtml(value, {
+    allowedTags: safeTags,
+    allowedAttributes: {
+      '*': ['style', 'class'],
+      a: ['href', 'name', 'target', 'rel'],
+      img: ['src', 'alt', 'width', 'height', 'style'],
+      table: ['width', 'cellpadding', 'cellspacing', 'border', 'role'],
+      td: ['width', 'align', 'valign', 'colspan', 'rowspan'],
+      th: ['width', 'align', 'valign', 'colspan', 'rowspan'],
+    },
+    allowedStyles: {
+      '*': {
+        color: [/^#[0-9a-f]{3,8}$/i, /^(?:rgb|rgba|hsl|hsla)\([0-9.,%\s]+\)$/i, /^[a-z]{3,20}$/i],
+        'background-color': [/^#[0-9a-f]{3,8}$/i, /^(?:rgb|rgba|hsl|hsla)\([0-9.,%\s]+\)$/i, /^[a-z]{3,20}$/i],
+        'font-size': [/^[0-9.]+(?:px|em|rem|%)$/i],
+        'font-family': [/^[a-z0-9 ,"'_-]+$/i],
+        'font-weight': [/^(?:normal|bold|[1-9]00)$/i],
+        'text-align': [/^(?:left|right|center|justify)$/i],
+        'text-decoration': [/^(?:none|underline|line-through)$/i],
+        'line-height': [/^[0-9.]+(?:px|em|rem|%)?$/i],
+        padding: [/^[0-9.]+(?:px|em|rem|%)?(?:\s+[0-9.]+(?:px|em|rem|%)?){0,3}$/i],
+        margin: [/^[0-9.]+(?:px|em|rem|%)?(?:\s+[0-9.]+(?:px|em|rem|%)?){0,3}$/i],
+        width: [/^[0-9.]+(?:px|%|em|rem)$/i],
+        height: [/^[0-9.]+(?:px|%|em|rem)$/i],
+        'max-width': [/^[0-9.]+(?:px|%|em|rem)$/i],
+        'border-radius': [/^[0-9.]+(?:px|%|em|rem)$/i],
+        border: [/^[0-9px solid #a-z(),.%\s]+$/i],
+      },
+    },
+    allowedSchemes: ['http', 'https', 'mailto', 'tel'],
+    allowedSchemesByTag: { img: ['http', 'https'] },
+    allowProtocolRelative: false,
+    transformTags: { a: sanitizeHtml.simpleTransform('a', { target: '_blank', rel: 'noopener noreferrer' }) },
+  });
+}
+
+function campaignTextFromHtml(html) {
+  return String(html)
+    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+    .replace(/<\/(?:p|div|h[1-6]|li|tr|table)>/gi, '\n')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n[ \t]+/g, '\n')
+    .trim();
+}
+
+function parseRecipientList(value) {
+  if (typeof value !== 'string' || !value.trim()) throw apiError('Enter at least one opted-in member email address.');
+  const raw = value.split(/[\s,;]+/).filter(Boolean);
+  if (raw.length > 100) throw apiError('A campaign can be sent to a maximum of 100 recipients at a time.');
+  const normalized = raw.map((item) => normalizeEmail(item));
+  if (normalized.some((email) => !email)) throw apiError('Check the recipient list: enter plain, valid email addresses.');
+  return [...new Set(normalized)];
+}
+
+function validateCampaignSender(senderNameValue, senderEmailValue) {
+  const senderName = requiredText(senderNameValue, 'Sender name', 80);
+  if (/[\r\n]/.test(senderName)) throw apiError('Sender name cannot contain line breaks.');
+  const senderEmail = normalizeEmail(senderEmailValue);
+  if (!senderEmail) throw apiError('Enter a valid sender email address.');
+  const configured = configuredSenderEmail();
+  if (!configured) throw apiError('The SMTP sender address is missing or invalid in .env.');
+  if (senderEmail !== configured) throw apiError(`Use the verified sender address configured in SMTP_FROM: ${configured}`);
+  return { senderName, senderEmail };
 }
 
 function transaction(callback) {
@@ -445,6 +569,7 @@ function getMemberSummary(member, today = localDateForTimezone()) {
     phone: member.phone,
     notes: member.notes,
     emailOptIn: Boolean(member.email_opt_in),
+    marketingOptIn: Boolean(member.marketing_opt_in),
     createdAt: member.created_at,
     createdOn: member.created_on,
     membership: membershipSummary,
@@ -556,7 +681,7 @@ function getOverview() {
 }
 
 function smtpConfigured() {
-  return Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM);
+  return Boolean(String(process.env.SMTP_HOST || '').trim() && configuredSenderEmail());
 }
 
 function getTransporter() {
@@ -657,6 +782,85 @@ async function runReminderCycle() {
   }
 }
 
+async function sendCampaignEmail(campaign, recipient) {
+  const transport = getTransporter();
+  if (!transport) throw new Error('SMTP is not configured.');
+  const gymName = getSetting('gym_name', 'Your Gym');
+  const footerText = `You are receiving this promotional email because you agreed to updates from ${gymName}. Reply to ${campaign.sender_email} if you would like the gym to remove you from future promotions.`;
+  const footerHtml = `<hr style="border:0;border-top:1px solid #e5e7eb;margin:28px 0"><p style="font-family:Arial,sans-serif;font-size:12px;line-height:1.6;color:#65716a">You are receiving this promotional email because you agreed to updates from ${escapeHtml(gymName)}. Reply to <a href="mailto:${escapeHtml(campaign.sender_email)}">${escapeHtml(campaign.sender_email)}</a> if you would like the gym to remove you from future promotions.</p>`;
+  const safeBody = sanitizeCampaignHtml(campaign.html_body);
+  await transport.sendMail({
+    from: { name: campaign.sender_name, address: campaign.sender_email },
+    replyTo: campaign.sender_email,
+    to: recipient.recipient,
+    subject: campaign.subject,
+    text: `${campaignTextFromHtml(safeBody)}\n\n${footerText}`,
+    html: `<!doctype html><html><body>${safeBody}${footerHtml}</body></html>`,
+  });
+}
+
+function refreshCampaignStatus(campaignId) {
+  const counts = db.prepare(`
+    SELECT COUNT(*) AS total,
+      SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued,
+      SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sent,
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+      SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped
+    FROM email_campaign_recipients WHERE campaign_id = ?
+  `).get(campaignId);
+  const queued = Number(counts.queued || 0);
+  const sent = Number(counts.sent || 0);
+  const failed = Number(counts.failed || 0);
+  const skipped = Number(counts.skipped || 0);
+  const status = queued > 0 ? 'sending' : (failed + skipped > 0 ? (sent > 0 ? 'partial' : 'failed') : 'sent');
+  db.prepare('UPDATE email_campaigns SET status = ? WHERE id = ?').run(status, campaignId);
+}
+
+let campaignCycleRunning = false;
+async function runCampaignQueue() {
+  if (campaignCycleRunning || !smtpConfigured()) return;
+  campaignCycleRunning = true;
+  try {
+    const queued = db.prepare(`
+      SELECT r.id AS recipient_id, r.campaign_id, r.member_id, r.recipient, r.attempt_count,
+        m.email AS current_email, m.marketing_opt_in,
+        c.sender_name, c.sender_email, c.subject, c.html_body
+      FROM email_campaign_recipients r
+      JOIN email_campaigns c ON c.id = r.campaign_id
+      JOIN members m ON m.id = r.member_id
+      WHERE r.status = 'queued' AND (r.next_attempt_at IS NULL OR r.next_attempt_at <= ?)
+        AND c.status IN ('queued', 'sending')
+      ORDER BY c.created_at ASC, r.id ASC LIMIT 20
+    `).all(nowIso());
+    for (const recipient of queued) {
+      db.prepare("UPDATE email_campaigns SET status = 'sending' WHERE id = ? AND status = 'queued'").run(recipient.campaign_id);
+      if (!recipient.marketing_opt_in || !recipient.current_email || recipient.current_email.toLowerCase() !== recipient.recipient.toLowerCase()) {
+        db.prepare("UPDATE email_campaign_recipients SET status = 'skipped', last_error = 'Member consent or email address changed before send.' WHERE id = ?")
+          .run(recipient.recipient_id);
+      } else {
+        try {
+          await sendCampaignEmail(recipient, { recipient: recipient.recipient });
+          db.prepare("UPDATE email_campaign_recipients SET status = 'sent', attempt_count = attempt_count + 1, next_attempt_at = NULL, sent_at = ?, last_error = NULL WHERE id = ?")
+            .run(nowIso(), recipient.recipient_id);
+        } catch (error) {
+          const attempts = Number(recipient.attempt_count) + 1;
+          const retryable = attempts < 3;
+          const delayMinutes = attempts === 1 ? 1 : 15;
+          const nextAttemptAt = retryable ? new Date(Date.now() + delayMinutes * 60_000).toISOString() : null;
+          db.prepare(`UPDATE email_campaign_recipients SET status = ?, attempt_count = ?, next_attempt_at = ?, last_error = ? WHERE id = ?`)
+            .run(retryable ? 'queued' : 'failed', attempts, nextAttemptAt, String(error?.message || 'Email delivery failed').slice(0, 500), recipient.recipient_id);
+          console.error(`Could not send campaign #${recipient.campaign_id} to recipient #${recipient.recipient_id} (attempt ${attempts}/3):`, error?.message || error);
+        }
+      }
+      refreshCampaignStatus(recipient.campaign_id);
+    }
+  } catch (error) {
+    console.error('Campaign queue error:', error);
+  } finally {
+    campaignCycleRunning = false;
+  }
+}
+
 function getCurrencyLocked() {
   return Number(db.prepare('SELECT COUNT(*) AS count FROM membership_plans').get().count) > 0
     || Number(db.prepare('SELECT COUNT(*) AS count FROM memberships').get().count) > 0
@@ -682,7 +886,7 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   // Frame policy is intentionally omitted so the hosted Arena preview can embed this app.
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'");
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-src 'self' about:; base-uri 'self'; form-action 'self'");
   next();
 });
 app.use(express.json({ limit: '64kb' }));
@@ -743,6 +947,7 @@ app.post('/api/logout', authMiddleware, (req, res) => {
 });
 
 app.use('/api', authMiddleware);
+app.use('/api', (req, res, next) => req.user?.role === 'owner' ? next() : res.status(403).json({ error: 'Owner access only.' }));
 
 app.get('/api/me', (req, res) => res.json({ user: req.user }));
 
@@ -771,6 +976,8 @@ app.get('/api/config', (req, res) => {
     currencyLocked: getCurrencyLocked(),
     smtpConfigured: smtpConfigured(),
     emailFrom: smtpConfigured() ? process.env.SMTP_FROM : null,
+    smtpSenderEmail: smtpConfigured() ? configuredSenderEmail() : null,
+    marketingRecipientCount: Number(db.prepare("SELECT COUNT(*) AS count FROM members WHERE marketing_opt_in = 1 AND email IS NOT NULL AND email <> ''").get().count),
     database: 'SQLite',
   });
 });
@@ -842,9 +1049,11 @@ app.post('/api/members', (req, res, next) => {
   try {
     const name = requiredText(req.body.name, 'Member name', 120);
     const email = normalizeEmail(req.body.email);
-    if (email === undefined) throw apiError('Enter a valid email address, or leave the email field blank.');
+    if (email === undefined) throw apiError('Enter a valid email address.');
+    if (!email) throw apiError('Member email is required.');
     const phone = normalizePhone(req.body.phone);
     if (phone === undefined) throw apiError('Phone number must be 40 characters or fewer.');
+    if (!phone) throw apiError('Member phone number is required.');
     const notes = typeof req.body.notes === 'string' ? req.body.notes.trim().slice(0, 1000) : '';
     const plan = getPlanById(req.body.planId);
     const startDate = req.body.startDate || localDateForTimezone();
@@ -858,13 +1067,15 @@ app.post('/api/members', (req, res, next) => {
     if (confirmCash && (!paymentAmountMinor || paymentAmountMinor < 1 || paymentAmountMinor > priceMinor)) {
       throw apiError('Enter a cash amount greater than zero and no more than the membership price.');
     }
+    const marketingOptIn = req.body.marketingOptIn === true;
     if (req.body.emailOptIn === true && !email) throw apiError('An email address is required before enabling email reminders.');
+    if (marketingOptIn && !email) throw apiError('An email address is required before enabling promotional emails.');
 
     const newMemberId = transaction(() => {
       const memberInsert = db.prepare(`
-        INSERT INTO members (name, email, phone, notes, email_opt_in, created_at, created_on)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(name, email, phone, notes, req.body.emailOptIn === true ? 1 : 0, nowIso(), localDateForTimezone());
+        INSERT INTO members (name, email, phone, notes, email_opt_in, marketing_opt_in, created_at, created_on)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(name, email, phone, notes, req.body.emailOptIn === true ? 1 : 0, marketingOptIn ? 1 : 0, nowIso(), localDateForTimezone());
       const memberId = Number(memberInsert.lastInsertRowid);
       const membership = createMembership({ memberId, plan, startDate, priceMinor, createdBy: req.user.id });
       if (confirmCash) insertCashPayment({ memberId, membershipId: membership.id, amountMinor: paymentAmountMinor, note: 'Cash received and confirmed at registration', createdBy: req.user.id });
@@ -881,14 +1092,18 @@ app.patch('/api/members/:id', (req, res, next) => {
     if (!existing) throw apiError('Member not found.', 404);
     const name = req.body.name === undefined ? existing.name : requiredText(req.body.name, 'Member name', 120);
     const email = req.body.email === undefined ? existing.email : normalizeEmail(req.body.email);
-    if (email === undefined) throw apiError('Enter a valid email address, or leave the email field blank.');
+    if (email === undefined) throw apiError('Enter a valid email address.');
+    if (!email) throw apiError('Member email is required.');
     const phone = req.body.phone === undefined ? existing.phone : normalizePhone(req.body.phone);
     if (phone === undefined) throw apiError('Phone number must be 40 characters or fewer.');
+    if (!phone) throw apiError('Member phone number is required.');
     const notes = req.body.notes === undefined ? existing.notes : String(req.body.notes).trim().slice(0, 1000);
     const emailOptIn = req.body.emailOptIn === undefined ? Boolean(existing.email_opt_in) : req.body.emailOptIn === true;
+    const marketingOptIn = req.body.marketingOptIn === undefined ? Boolean(existing.marketing_opt_in) : req.body.marketingOptIn === true;
     if (emailOptIn && !email) throw apiError('An email address is required before enabling email reminders.');
-    db.prepare('UPDATE members SET name = ?, email = ?, phone = ?, notes = ?, email_opt_in = ? WHERE id = ?')
-      .run(name, email, phone, notes, emailOptIn ? 1 : 0, id);
+    if (marketingOptIn && !email) throw apiError('An email address is required before enabling promotional emails.');
+    db.prepare('UPDATE members SET name = ?, email = ?, phone = ?, notes = ?, email_opt_in = ?, marketing_opt_in = ? WHERE id = ?')
+      .run(name, email, phone, notes, emailOptIn ? 1 : 0, marketingOptIn ? 1 : 0, id);
     res.json({ member: getMemberSummary(db.prepare('SELECT * FROM members WHERE id = ?').get(id)) });
   } catch (error) { next(error); }
 });
@@ -1030,6 +1245,104 @@ app.get('/api/reminders', (req, res) => {
   res.json({ reminders, smtpConfigured: smtpConfigured() });
 });
 
+app.get('/api/campaigns/recipients', (req, res) => {
+  const recipients = db.prepare(`
+    SELECT id, name, email, phone FROM members
+    WHERE marketing_opt_in = 1 AND email IS NOT NULL AND email <> ''
+    ORDER BY name COLLATE NOCASE ASC
+  `).all().map((member) => ({ id: member.id, name: member.name, email: member.email, phone: member.phone }));
+  res.json({ recipients, smtpConfigured: smtpConfigured(), senderEmail: configuredSenderEmail() });
+});
+
+app.get('/api/campaigns', (req, res) => {
+  const campaigns = db.prepare(`
+    SELECT c.id, c.sender_name, c.sender_email, c.subject, c.status, c.created_at,
+      (SELECT COUNT(*) FROM email_campaign_recipients r WHERE r.campaign_id = c.id) AS recipient_count,
+      (SELECT COUNT(*) FROM email_campaign_recipients r WHERE r.campaign_id = c.id AND r.status = 'sent') AS sent_count,
+      (SELECT COUNT(*) FROM email_campaign_recipients r WHERE r.campaign_id = c.id AND r.status = 'failed') AS failed_count,
+      (SELECT COUNT(*) FROM email_campaign_recipients r WHERE r.campaign_id = c.id AND r.status = 'skipped') AS skipped_count,
+      (SELECT COUNT(*) FROM email_campaign_recipients r WHERE r.campaign_id = c.id AND r.status = 'queued') AS queued_count
+    FROM email_campaigns c ORDER BY c.created_at DESC, c.id DESC LIMIT 30
+  `).all().map((campaign) => ({
+    id: campaign.id,
+    senderName: campaign.sender_name,
+    senderEmail: campaign.sender_email,
+    subject: campaign.subject,
+    status: campaign.status,
+    createdAt: campaign.created_at,
+    recipientCount: Number(campaign.recipient_count),
+    sentCount: Number(campaign.sent_count),
+    failedCount: Number(campaign.failed_count),
+    skippedCount: Number(campaign.skipped_count),
+    queuedCount: Number(campaign.queued_count),
+  }));
+  res.json({ campaigns });
+});
+
+app.post('/api/campaigns/test', async (req, res, next) => {
+  try {
+    if (!smtpConfigured()) throw apiError('Email is not configured yet. Add your SMTP settings to the .env file first.', 400);
+    const { senderName, senderEmail } = validateCampaignSender(req.body.senderName, req.body.senderEmail);
+    const subject = requiredText(req.body.subject, 'Subject', 180);
+    if (/[\r\n]/.test(subject)) throw apiError('Subject cannot contain line breaks.');
+    const rawHtml = requiredText(req.body.htmlBody, 'Email body', 20_000);
+    const htmlBody = sanitizeCampaignHtml(rawHtml);
+    if (!htmlBody.trim()) throw apiError('The email body is empty after unsafe HTML was removed.');
+    const transport = getTransporter();
+    await transport.verify();
+    const gymName = getSetting('gym_name', 'Your Gym');
+    await transport.sendMail({
+      from: { name: senderName, address: senderEmail },
+      replyTo: senderEmail,
+      to: req.user.email,
+      subject: `[TEST] ${subject}`,
+      text: `${campaignTextFromHtml(htmlBody)}\n\nThis was a test campaign from ${gymName}.`,
+      html: `<!doctype html><html><body>${htmlBody}<hr><p style=\"font-family:Arial,sans-serif;font-size:12px;color:#6b7280\">Test email for ${escapeHtml(gymName)}. Only you received this test.</p></body></html>`,
+    });
+    res.json({ ok: true, sentTo: req.user.email });
+  } catch (error) {
+    if (error.status) return next(error);
+    next(apiError(`Test email failed: ${String(error?.message || 'Unable to connect to SMTP').slice(0, 220)}`, 502));
+  }
+});
+
+app.post('/api/campaigns/send', (req, res, next) => {
+  try {
+    if (!smtpConfigured()) throw apiError('Email is not configured yet. Add your SMTP settings to the .env file first.', 400);
+    const { senderName, senderEmail } = validateCampaignSender(req.body.senderName, req.body.senderEmail);
+    const subject = requiredText(req.body.subject, 'Subject', 180);
+    if (/[\r\n]/.test(subject)) throw apiError('Subject cannot contain line breaks.');
+    const rawHtml = requiredText(req.body.htmlBody, 'Email body', 20_000);
+    const htmlBody = sanitizeCampaignHtml(rawHtml);
+    if (!htmlBody.trim()) throw apiError('The email body is empty after unsafe HTML was removed.');
+    const emails = parseRecipientList(req.body.recipientList);
+    const placeholders = emails.map(() => '?').join(',');
+    const optedIn = db.prepare(`
+      SELECT id, email FROM members
+      WHERE marketing_opt_in = 1 AND email IS NOT NULL AND lower(email) IN (${placeholders})
+    `).all(...emails);
+    const optedInByEmail = new Map(optedIn.map((member) => [member.email.toLowerCase(), member]));
+    const notConsented = emails.filter((email) => !optedInByEmail.has(email));
+    if (notConsented.length) throw apiError(`${notConsented.length} address(es) are not on a member record with promotional email consent. Only opted-in members can receive campaigns.`);
+
+    const campaignId = transaction(() => {
+      const inserted = db.prepare(`
+        INSERT INTO email_campaigns (sender_name, sender_email, subject, html_body, status, created_at, created_by)
+        VALUES (?, ?, ?, ?, 'queued', ?, ?)
+      `).run(senderName, senderEmail, subject, htmlBody, nowIso(), req.user.id);
+      const id = Number(inserted.lastInsertRowid);
+      const addRecipient = db.prepare(`
+        INSERT INTO email_campaign_recipients (campaign_id, member_id, recipient, status, created_at)
+        VALUES (?, ?, ?, 'queued', ?)
+      `);
+      for (const email of emails) addRecipient.run(id, optedInByEmail.get(email).id, email, nowIso());
+      return id;
+    });
+    void runCampaignQueue();
+    res.status(202).json({ ok: true, campaignId, recipientCount: emails.length, status: 'queued' });
+  } catch (error) { next(error); }
+});
+
 app.post('/api/email/test', async (req, res, next) => {
   try {
     if (!smtpConfigured()) throw apiError('Email is not configured yet. Add your SMTP settings to the .env file first.', 400);
@@ -1108,12 +1421,12 @@ app.delete('/api/demo-data', (req, res, next) => {
 });
 
 app.get('/api/export/members.csv', (req, res) => {
-  const headers = ['Name', 'Email', 'Phone', 'Member since', 'Plan', 'Start date', 'End date', 'Membership status', `Plan price (${getSetting('currency', 'TND')})`, `Paid (${getSetting('currency', 'TND')})`, `Balance due (${getSetting('currency', 'TND')})`, 'Email reminders agreed'];
+  const headers = ['Name', 'Email', 'Phone', 'Member since', 'Plan', 'Start date', 'End date', 'Membership status', `Plan price (${getSetting('currency', 'TND')})`, `Paid (${getSetting('currency', 'TND')})`, `Balance due (${getSetting('currency', 'TND')})`, 'Email reminders agreed', 'Marketing emails agreed'];
   const rows = getMembersList('').map((member) => [
     member.name, member.email, member.phone, member.createdOn, member.membership?.planName || '',
     member.membership?.startDate || '', member.membership?.endDate || '', member.membership?.status || 'no-plan',
     member.membership ? fromMinorUnits(member.membership.priceMinor) : '',
-    fromMinorUnits(member.paidMinor), fromMinorUnits(member.outstandingMinor), member.emailOptIn ? 'Yes' : 'No',
+    fromMinorUnits(member.paidMinor), fromMinorUnits(member.outstandingMinor), member.emailOptIn ? 'Yes' : 'No', member.marketingOptIn ? 'Yes' : 'No',
   ]);
   const csv = '\uFEFF' + [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -1177,15 +1490,18 @@ const server = app.listen(PORT, HOST, () => {
   console.log(`SQLite database: ${DB_PATH}`);
   if (!smtpConfigured()) console.log('SMTP is not configured: email reminders will remain queued until SMTP details are added to .env.');
   runReminderCycle();
+  runCampaignQueue();
 });
 
 const reminderTimer = setInterval(runReminderCycle, 60_000);
+const campaignTimer = setInterval(runCampaignQueue, 15_000);
 const sessionCleanupTimer = setInterval(() => {
   db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(nowIso());
 }, 60 * 60_000);
 
 function shutdown() {
   clearInterval(reminderTimer);
+  clearInterval(campaignTimer);
   clearInterval(sessionCleanupTimer);
   server.close(() => {
     db.close();
